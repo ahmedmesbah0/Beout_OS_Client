@@ -4,10 +4,76 @@
 #include <random>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
+#include <openssl/rand.h>
+#include <openssl/sha.h>
 #include "../activation/activation_manager.hpp"
 #include "../activation/machine_id.hpp"
 
 using json = nlohmann::json;
+
+namespace {
+
+std::string sha256_hash(const std::string& input) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(input.c_str()), input.length(), hash);
+    std::stringstream ss;
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    }
+    return ss.str();
+}
+
+std::string generate_salt() {
+    unsigned char salt_buf[16];
+    if (RAND_bytes(salt_buf, sizeof(salt_buf)) != 1) {
+        // Fallback to std::random_device if OpenSSL RAND fails
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<unsigned int> dis(0, 255);
+        for (int i = 0; i < 16; ++i) {
+            salt_buf[i] = dis(gen);
+        }
+    }
+    std::stringstream ss;
+    for (int i = 0; i < 16; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)salt_buf[i];
+    }
+    return ss.str();
+}
+
+std::string hash_password(const std::string& password) {
+    std::string salt = generate_salt();
+    return salt + "$" + sha256_hash(salt + password);
+}
+
+bool verify_password(const std::string& password, const std::string& db_hash_field) {
+    size_t dollar_pos = db_hash_field.find('$');
+    if (dollar_pos == std::string::npos) return false;
+    std::string salt = db_hash_field.substr(0, dollar_pos);
+    std::string hash = db_hash_field.substr(dollar_pos + 1);
+    return sha256_hash(salt + password) == hash;
+}
+
+std::string generate_session_token() {
+    unsigned char token_buf[32];
+    if (RAND_bytes(token_buf, sizeof(token_buf)) != 1) {
+        // Fallback
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<unsigned int> dis(0, 255);
+        for (int i = 0; i < 32; ++i) {
+            token_buf[i] = dis(gen);
+        }
+    }
+    std::stringstream ss;
+    for (int i = 0; i < 32; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)token_buf[i];
+    }
+    return ss.str();
+}
+
+} // namespace
 
 namespace beout_os {
 namespace api {
@@ -15,6 +81,13 @@ namespace api {
 ApiServer::ApiServer(const std::string& cert_path, const std::string& private_key_path, std::shared_ptr<database::DatabaseManager> db)
     : db_(std::move(db)) {
     server_ = std::make_unique<httplib::SSLServer>(cert_path.c_str(), private_key_path.c_str());
+    
+    // Seed default admin password if not already present in the database
+    std::string existing_hash = db_->get_config("admin_password_hash").value_or("");
+    if (existing_hash.empty()) {
+        db_->set_config("admin_password_hash", hash_password("admin"));
+    }
+
     setup_routes();
 }
 
@@ -169,11 +242,15 @@ void ApiServer::setup_routes() {
             std::string username = body.value("username", "");
             std::string password = body.value("password", "");
 
-            // For demo purposes, hardcode admin:admin
-            if (username == "admin" && password == "admin") {
-                // Generate a simple token
+            std::string stored_hash = db_->get_config("admin_password_hash").value_or("");
+            if (stored_hash.empty()) {
+                stored_hash = hash_password("admin");
+                db_->set_config("admin_password_hash", stored_hash);
+            }
+
+            if (username == "admin" && verify_password(password, stored_hash)) {
                 std::lock_guard<std::mutex> lock(session_mutex_);
-                current_session_token_ = "DEMO-SESSION-TOKEN-XYZ123";
+                current_session_token_ = generate_session_token();
                 res.set_content(json{{"token", current_session_token_}}.dump(), "application/json");
             } else {
                 res.status = 401;
@@ -264,7 +341,7 @@ void ApiServer::setup_routes() {
                 }
 
                 // Trigger sync network configuration in OS background
-                std::system("/opt/beout_os/bin/sync_network.sh &");
+                std::system("sudo /opt/beout_os/bin/sync_network.sh &");
             }
             res.set_content(json{{"status", "success"}}.dump(), "application/json");
         } catch (const json::parse_error&) {
@@ -279,7 +356,7 @@ void ApiServer::setup_routes() {
         if (!check_auth(req, res)) return;
 
         // Run check_updates.sh in the background
-        std::system("/opt/beout_os/bin/check_updates.sh &");
+        std::system("sudo /opt/beout_os/bin/check_updates.sh &");
         
         res.set_content(json{{"status", "triggered"}}.dump(), "application/json");
     });

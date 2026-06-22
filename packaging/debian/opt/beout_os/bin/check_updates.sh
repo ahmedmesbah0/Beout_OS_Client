@@ -51,7 +51,11 @@ if [ -n "$LICENSE_KEY" ]; then
         -d "{\"machine_id\":\"$MACHINE_ID\",\"license_key\":\"$LICENSE_KEY\",\"machine_ip\":\"$LOCAL_IP\",\"os_version\":\"$CURRENT_VERSION\"}" \
         "$SERVER_URL/api/license/heartbeat" || echo "")
         
-    HB_STATUS=$(echo "$HB_RESPONSE" | grep -o '"status": "[^"]*' | grep -o '[^"]*$' || echo "")
+    if command -v jq >/dev/null 2>&1; then
+        HB_STATUS=$(echo "$HB_RESPONSE" | jq -r '.status // empty' 2>/dev/null || echo "")
+    else
+        HB_STATUS=$(echo "$HB_RESPONSE" | grep -o '"status": "[^"]*' | grep -o '[^"]*$' || echo "")
+    fi
     
     if [ "$HB_STATUS" = "REVOKED" ] || [ "$HB_STATUS" = "INACTIVE" ]; then
         echo "WARNING: License status has been marked as $HB_STATUS by the server. Deactivating appliance."
@@ -74,9 +78,16 @@ if ! curl -s $CURL_OPTS -f -L -o "$TEMP_JSON" "$UPDATE_URL"; then
 fi
 
 # Parse version, url and checksum from JSON
-LATEST_VERSION=$(grep -o '"version": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
-DEB_URL=$(grep -o '"url": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
-CHECKSUM=$(grep -o '"checksum": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
+if command -v jq >/dev/null 2>&1; then
+    LATEST_VERSION=$(jq -r '.version // empty' "$TEMP_JSON" 2>/dev/null || echo "")
+    DEB_URL=$(jq -r '.url // empty' "$TEMP_JSON" 2>/dev/null || echo "")
+    CHECKSUM=$(jq -r '.checksum // empty' "$TEMP_JSON" 2>/dev/null || echo "")
+else
+    # Fallback to grep if jq is not available
+    LATEST_VERSION=$(grep -o '"version": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
+    DEB_URL=$(grep -o '"url": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
+    CHECKSUM=$(grep -o '"checksum": "[^"]*' "$TEMP_JSON" | grep -o '[^"]*$' || echo "")
+fi
 
 rm -f "$TEMP_JSON"
 

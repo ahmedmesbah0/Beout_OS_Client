@@ -2,15 +2,36 @@
 set -e
 
 if [ "$1" = "configure" ]; then
+    # Create beout_api system user if it doesn't exist
+    if ! id "beout_api" >/dev/null 2>&1; then
+        useradd -r -s /usr/sbin/nologin -d /var/lib/beout_os beout_api
+    fi
+
     # Create required directories and set permissions
     mkdir -p /var/lib/beout_os
+    chown -R beout_api:beout_api /var/lib/beout_os
     chmod 755 /var/lib/beout_os
 
     # Generate self-signed certs for API if they don't exist
     if [ ! -f /opt/beout_os/bin/server.crt ]; then
         cd /opt/beout_os/bin
         openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=localhost" 2>/dev/null
+        chown beout_api:beout_api server.key server.crt
         chmod 600 server.key
+        chmod 644 server.crt
+    fi
+
+    # Ensure ownership of /opt/beout_os
+    chown -R beout_api:beout_api /opt/beout_os
+    chmod 755 /opt/beout_os
+    # Provisioning console runs as root, ensure it is owned by root
+    chown root:root /opt/beout_os/bin/beout_os_provisioning
+    chmod 755 /opt/beout_os/bin/beout_os_provisioning
+
+    # Enforce correct permissions on sudoers drop-in
+    if [ -f /etc/sudoers.d/beout_os ]; then
+        chown root:root /etc/sudoers.d/beout_os
+        chmod 440 /etc/sudoers.d/beout_os
     fi
 
     # Reload systemd and enable services safely (ignore errors in chroot)

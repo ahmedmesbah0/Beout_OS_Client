@@ -1,0 +1,3 @@
+# Sudoers configuration for Beout_OS
+# Allows the deprivileged API daemon to run network synchronization and system updates
+beout_api ALL=(ALL) NOPASSWD: /opt/beout_os/bin/sync_network.sh, /opt/beout_os/bin/check_updates.sh

@@ -60,7 +60,7 @@ bool DatabaseManager::set_config(const std::string& key, const std::string& valu
     
     // Trigger OS-level config sync script asynchronously
     if (success && key.find("network_") == 0) {
-        std::system("/opt/beout_os/bin/sync_network.sh &");
+        std::system("sudo /opt/beout_os/bin/sync_network.sh &");
     }
     
     return success;

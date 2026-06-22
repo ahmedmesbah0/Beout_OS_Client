@@ -8,7 +8,8 @@ ExecStart=/opt/beout_os/bin/beout_os_api
 WorkingDirectory=/opt/beout_os/bin
 Restart=always
 RestartSec=5
-User=root
+User=beout_api
+Group=beout_api
 
 [Install]
 WantedBy=multi-user.target

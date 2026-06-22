@@ -1,0 +1,8 @@
+./build.sh clean
+./build.sh configure
+./build.sh build
+cd dashboard
+npm install
+npm run build
+cd ..
+sudo ./build.sh iso
