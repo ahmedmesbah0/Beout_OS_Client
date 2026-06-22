@@ -274,15 +274,36 @@ mount_target() {
     log "Filesystems mounted at ${TARGET_MNT}"
 }
 
-# === PHASE 6: DEBOOTSTRAP ===
+# === PHASE 6: CLONE FILESYSTEM ===
 
 install_base_system() {
-    step "Installing Debian base system (this may take several minutes)"
+    step "Installing Debian base system (offline copy from live CD)"
 
-    debootstrap --arch=amd64 "$DEBIAN_RELEASE" "$TARGET_MNT" http://deb.debian.org/debian >> "$LOG_FILE" 2>&1 || \
-        die "debootstrap failed. Check ${LOG_FILE} for details."
+    log "Cloning live system filesystem to target..."
 
-    log "Base system installed successfully."
+    # Perform a local file copy of the root filesystem, excluding pseudo filesystems and the mount target
+    tar -cf - --one-file-system --directory=/ \
+        --exclude=proc --exclude=sys --exclude=dev --exclude=tmp \
+        --exclude=run --exclude=mnt --exclude=media --exclude=lost+found . | \
+        tar -xf - -C "$TARGET_MNT" >> "$LOG_FILE" 2>&1 || \
+        die "Offline copy of base system failed."
+
+    # Recreate virtual directory mounts
+    mkdir -p "$TARGET_MNT"/{proc,sys,dev,tmp,run,mnt,media}
+    chmod 1777 "$TARGET_MNT"/tmp
+
+    # Clean up live-config and live-boot packaging so target boots normally
+    chroot "$TARGET_MNT" /bin/bash -c "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get purge -y -qq live-boot live-config live-config-systemd >> /tmp/purge_live.log 2>&1 || true
+    " || true
+
+    # Remove the custom installer autostart systemd service so target does not re-run installation
+    rm -f "$TARGET_MNT"/etc/systemd/system/beout-installer.service
+    rm -f "$TARGET_MNT"/etc/systemd/system/multi-user.target.wants/beout-installer.service
+    rm -f "$TARGET_MNT"/etc/systemd/system/getty@tty1.service
+
+    log "Base system copied and cleaned successfully."
 }
 
 # === PHASE 7: CHROOT SETUP ===
@@ -330,25 +351,6 @@ EOF
 UUID=${root_uuid}  /  ext4  errors=remount-ro  0  1
 EOF
     fi
-
-    # Update package cache inside chroot and install essential packages
-    chroot "${TARGET_MNT}" /bin/bash -c "
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq \
-            linux-image-amd64 \
-            systemd-sysv \
-            locales \
-            openssl \
-            libssl3 \
-            sqlite3 \
-            libsqlite3-0 \
-            iproute2 \
-            ifupdown \
-            net-tools \
-            ca-certificates \
-            grub-pc
-    " >> "$LOG_FILE" 2>&1 || die "Failed to install system packages."
 
     # Generate locale
     chroot "${TARGET_MNT}" locale-gen >> "$LOG_FILE" 2>&1 || true
