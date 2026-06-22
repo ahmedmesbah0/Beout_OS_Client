@@ -19,6 +19,7 @@ bool DatabaseManager::initialize() {
         std::cerr << "Cannot open database: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
+    sqlite3_busy_timeout(db_, 5000);
 
     const char* create_table_query = R"(
         CREATE TABLE IF NOT EXISTS config (

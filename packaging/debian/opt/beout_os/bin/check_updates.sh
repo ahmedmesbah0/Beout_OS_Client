@@ -6,7 +6,7 @@ DB_PATH="/var/lib/beout_os/config.db"
 
 # Helper to get config from sqlite
 get_config() {
-    sqlite3 "$DB_PATH" "SELECT value FROM config WHERE key='$1';" 2>/dev/null || echo ""
+    sqlite3 "$DB_PATH" "PRAGMA busy_timeout=5000; SELECT value FROM config WHERE key='$1';" 2>/dev/null || echo ""
 }
 
 # 1. Get local system details
@@ -59,8 +59,8 @@ if [ -n "$LICENSE_KEY" ]; then
     
     if [ "$HB_STATUS" = "REVOKED" ] || [ "$HB_STATUS" = "INACTIVE" ]; then
         echo "WARNING: License status has been marked as $HB_STATUS by the server. Deactivating appliance."
-        sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_status', 'INACTIVE');"
-        sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_token', '');"
+        sqlite3 "$DB_PATH" "PRAGMA busy_timeout=5000; INSERT OR REPLACE INTO config (key, value) VALUES ('activation_status', 'INACTIVE');"
+        sqlite3 "$DB_PATH" "PRAGMA busy_timeout=5000; INSERT OR REPLACE INTO config (key, value) VALUES ('activation_token', '');"
         exit 0
     fi
 fi
