@@ -25,10 +25,11 @@ function clean() {
 }
 
 function configure() {
-    echo "Configuring CMake (${CMAKE_BUILD_TYPE})..."
+    local EXTRA_FLAGS="${1:-}"
+    echo "Configuring CMake (${CMAKE_BUILD_TYPE}) ${EXTRA_FLAGS}..."
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
-    cmake -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" ..
+    cmake -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" ${EXTRA_FLAGS} ..
 }
 
 function build() {
@@ -131,9 +132,9 @@ case "$1" in
     clean) clean ;;
     configure) configure ;;
     build) build ;;
-    test) run_tests ;;
+    test) configure "-DBUILD_TESTING=ON"; build; run_tests ;;
     validate) "${PROJECT_ROOT}/installer/validate_iso.sh" ;;
     iso) build_iso ;;
-    all) clean; configure; build; run_tests ;;
+    all) clean; configure "-DBUILD_TESTING=ON"; build; run_tests ;;
     *) usage; exit 1 ;;
 esac

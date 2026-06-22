@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(Beout_OSSecurityAppliance VERSION 1.0.0 LANGUAGES CXX C)
-enable_testing()
+
+option(BUILD_TESTING "Build the test suite" OFF)
+
+if(BUILD_TESTING)
+  enable_testing()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,13 +25,15 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,un
 find_package(OpenSSL)
 find_package(SQLite3)
 
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG release-1.12.1
-)
-FetchContent_MakeAvailable(googletest)
+if(BUILD_TESTING)
+  include(FetchContent)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG release-1.12.1
+  )
+  FetchContent_MakeAvailable(googletest)
+endif()
 
 
 if(NOT SQLite3_FOUND)
@@ -57,7 +64,9 @@ add_subdirectory(appliance-cli)
 add_subdirectory(activation)
 add_subdirectory(licensing)
 add_subdirectory(api)
-add_subdirectory(tests)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
 
 # Static analysis and formatting
 find_program(CLANG_TIDY_EXE NAMES clang-tidy)
