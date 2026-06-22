@@ -341,25 +341,29 @@ void ApiServer::setup_routes() {
                 }
 
                 // Trigger sync network configuration in OS background
-                std::system("sudo /opt/beout_os/bin/sync_network.sh &");
+                if (std::system("sudo /opt/beout_os/bin/sync_network.sh &") != 0) {
+                    std::cerr << "Warning: Failed to launch sync_network.sh background process." << std::endl;
+                }
             }
             res.set_content(json{{"status", "success"}}.dump(), "application/json");
         } catch (const json::parse_error&) {
             res.status = 400;
             res.set_content(json{{"error", "Invalid JSON"}}.dump(), "application/json");
         }
-    });
-
-    // Trigger manual update check API
-    server_->Post("/api/update/check", [&](const httplib::Request& req, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        if (!check_auth(req, res)) return;
-
-        // Run check_updates.sh in the background
-        std::system("sudo /opt/beout_os/bin/check_updates.sh &");
-        
-        res.set_content(json{{"status", "triggered"}}.dump(), "application/json");
-    });
+     });
+ 
+     // Trigger manual update check API
+     server_->Post("/api/update/check", [&](const httplib::Request& req, httplib::Response& res) {
+         res.set_header("Access-Control-Allow-Origin", "*");
+         if (!check_auth(req, res)) return;
+ 
+         // Run check_updates.sh in the background
+         if (std::system("sudo /opt/beout_os/bin/check_updates.sh &") != 0) {
+             std::cerr << "Warning: Failed to launch check_updates.sh background process." << std::endl;
+         }
+         
+         res.set_content(json{{"status", "triggered"}}.dump(), "application/json");
+     });
 
     // License Status API
     server_->Get("/api/license", [&](const httplib::Request& req, httplib::Response& res) {

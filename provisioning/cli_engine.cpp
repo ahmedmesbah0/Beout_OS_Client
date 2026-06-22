@@ -138,12 +138,16 @@ void CliEngine::factory_reset() {
 
 void CliEngine::reboot() {
     std::cout << "Rebooting system...\n";
-    std::system("reboot");
+    if (std::system("reboot") != 0) {
+        std::cerr << "Failed to trigger system reboot.\n";
+    }
 }
 
 void CliEngine::shutdown() {
     std::cout << "Shutting down system...\n";
-    std::system("shutdown -h now");
+    if (std::system("shutdown -h now") != 0) {
+        std::cerr << "Failed to trigger system shutdown.\n";
+    }
 }
 
 void CliEngine::run() {
