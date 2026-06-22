@@ -14,6 +14,7 @@ function usage() {
     echo "  configure  Run CMake configure"
     echo "  build      Build all targets"
     echo "  test       Run unit tests"
+    echo "  validate   Validate ISO config and installer script (Pre-flight)"
     echo "  iso        Build the Beout_OS installer ISO"
     echo "  all        Clean, configure, build, and test"
 }
@@ -46,6 +47,10 @@ function build_iso() {
     echo "  Beout_OS ISO Builder"
     echo "============================================"
     echo ""
+
+    # Step 0: Pre-flight Validation Checks
+    echo "[0/4] Running pre-flight ISO validation checks..."
+    "${PROJECT_ROOT}/installer/validate_iso.sh"
 
     # Step 1: Build the .deb package
     echo "[1/4] Building .deb package..."
@@ -127,6 +132,7 @@ case "$1" in
     configure) configure ;;
     build) build ;;
     test) run_tests ;;
+    validate) "${PROJECT_ROOT}/installer/validate_iso.sh" ;;
     iso) build_iso ;;
     all) clean; configure; build; run_tests ;;
     *) usage; exit 1 ;;
