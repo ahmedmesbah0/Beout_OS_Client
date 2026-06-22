@@ -9,6 +9,8 @@ on:
 jobs:
   build-test-deploy:
     runs-on: ubuntu-24.04
+    env:
+      SERVER_SSH_HOST: ${{ secrets.SERVER_SSH_HOST }}
 
     steps:
     - name: Checkout Code
@@ -35,7 +37,7 @@ jobs:
 
     - name: Configure CMake
       run: |
-        cmake -S Beout_OS_Client -B Beout_OS_Client/build -DCMAKE_BUILD_TYPE=Release
+        cmake -S Beout_OS_Client -B Beout_OS_Client/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 
     - name: Build C++ Targets
       run: |
@@ -80,7 +82,7 @@ jobs:
         retention-days: 7
 
     - name: Deploy to Update Server (Optional)
-      if: github.ref == 'refs/heads/main' && secrets.SERVER_SSH_HOST != ''
+      if: github.ref == 'refs/heads/main' && env.SERVER_SSH_HOST != ''
       uses: appleboy/scp-action@master
       with:
         host: ${{ secrets.SERVER_SSH_HOST }}
@@ -92,7 +94,7 @@ jobs:
         strip_components: 1
 
     - name: Register Update in Licensing Database
-      if: github.ref == 'refs/heads/main' && secrets.SERVER_SSH_HOST != ''
+      if: github.ref == 'refs/heads/main' && env.SERVER_SSH_HOST != ''
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.SERVER_SSH_HOST }}
