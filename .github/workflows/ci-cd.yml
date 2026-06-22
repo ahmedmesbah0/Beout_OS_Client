@@ -1,0 +1,90 @@
+name: Beout OS Client CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          sqlite3 \
+          libsqlite3-dev \
+          jq
+
+    - name: Set up Node.js (for Dashboard)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: Beout_OS_Client/dashboard/package-lock.json
+
+    - name: Configure CMake
+      run: |
+        cmake -S Beout_OS_Client -B Beout_OS_Client/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ Targets
+      run: |
+        cmake --build Beout_OS_Client/build --config Release
+
+    - name: Run C++ Unit Tests
+      run: |
+        cd Beout_OS_Client/build
+        ctest --output-on-failure
+
+    - name: Build Dashboard & Package Debian Release
+      run: |
+        cd Beout_OS_Client
+        ./packaging/build_deb.sh
+
+    - name: Extract Version
+      id: get_version
+      run: |
+        VERSION=$(grep 'Version:' Beout_OS_Client/packaging/debian/DEBIAN/control | awk '{print $2}')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Extracted Version: $VERSION"
+
+    - name: Upload Debian Package Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: beout-os-core-deb-${{ steps.get_version.outputs.version }}
+        path: Beout_OS_Client/beout_os-core.deb
+        if-no-files-found: error
+        retention-days: 7
+
+    - name: Deploy to Update Server (Optional)
+      if: github.ref == 'refs/heads/main' && secrets.SERVER_SSH_HOST != ''
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.SERVER_SSH_HOST }}
+        username: ${{ secrets.SERVER_SSH_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_SSH_PORT || 22 }}
+        source: "Beout_OS_Client/beout_os-core.deb"
+        target: "/tmp"
+        strip_components: 1
+
+    - name: Register Update in Licensing Database
+      if: github.ref == 'refs/heads/main' && secrets.SERVER_SSH_HOST != ''
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_SSH_HOST }}
+        username: ${{ secrets.SERVER_SSH_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_SSH_PORT || 22 }}
+        script: |
+          php /root/Beout_OS_Server/bin/publish_update.php "${{ steps.get_version.outputs.version }}" "/tmp/beout_os-core.deb"
+          rm -f /tmp/beout_os-core.deb
