@@ -12,6 +12,8 @@ npm install
 npm run build
 cd ..
 ./build.sh iso
+
+to get the Download ISO
 cd installer
 python3 -m http.server 8080
 
