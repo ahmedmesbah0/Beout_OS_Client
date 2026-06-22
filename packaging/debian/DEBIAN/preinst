@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Stop services if they are running during an upgrade
+if [ "$1" = "upgrade" ]; then
+    systemctl stop beout_os-api || true
+    systemctl stop beout_os-provisioning || true
+fi
+
+exit 0

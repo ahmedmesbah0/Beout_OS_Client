@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+echo "============================================="
+echo "Configuring Beout_OS"
+echo "============================================="
+
+# 1. Rewrite ISOLINUX (Legacy BIOS Boot) to boot instantly without showing a menu
+if [ -d binary/isolinux ]; then
+    echo "Configuring ISOLINUX for instant boot..."
+    cat <<'EOF' > binary/isolinux/isolinux.cfg
+default beout_install
+prompt 0
+timeout 1
+
+label beout_install
+    linux /live/vmlinuz
+    initrd /live/initrd.img
+    append boot=live components quiet splash username=root
+EOF
+fi
+
+# 2. Rewrite GRUB (UEFI Boot) to boot instantly without showing a menu
+if [ -d binary/boot/grub ]; then
+    echo "Configuring GRUB for instant boot..."
+    cat <<'EOF' > binary/boot/grub/grub.cfg
+set default=0
+set timeout=0
+
+menuentry "Beout_OS Installer" {
+    linux /live/vmlinuz boot=live components quiet splash username=root
+    initrd /live/initrd.img
+}
+EOF
+fi

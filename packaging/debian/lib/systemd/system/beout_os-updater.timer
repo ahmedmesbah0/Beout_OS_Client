@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Beout_OS Auto-Updater every 5 seconds (Testing)
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Beout_OS Provisioning Console
+After=network.target getty.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=idle
+ExecStart=-/opt/beout_os/bin/beout_os_provisioning
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+Package: beout-os-core
+Version: 1.0.0
+Architecture: amd64
+Maintainer: Beout_OS Security <security@beout.ai>
+Depends: sqlite3, openssl, libssl3, systemd
+Section: admin
+Priority: required
+Description: Beout_OS Core Security Appliance
+ Contains the provisioning CLI and HTTPS management API for the Beout_OS appliance.

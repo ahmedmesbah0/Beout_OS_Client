@@ -1,0 +1,32 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.deb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Live-build output (generated during ISO build)
+installer/.build/
+installer/chroot/
+installer/binary/
+installer/cache/
+installer/*.iso
+installer/*.zsync
+installer/*.contents
+installer/*.files
+installer/*.packages
+installer/config/includes.chroot/
+
+# Node modules
+dashboard/node_modules/
+dashboard/dist/
+
+# OS files
+.DS_Store
+Thumbs.db

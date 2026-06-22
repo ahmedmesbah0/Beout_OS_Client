@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+lb config noauto \
+    --architecture amd64 \
+    --distribution bookworm \
+    --system live \
+    --bootappend-live "boot=live components quiet splash username=root" \
+    --iso-application "Beout_OS Installer" \
+    --iso-publisher "Beout_OS" \
+    --iso-volume "BEOUT_OS" \
+    --archive-areas "main contrib non-free non-free-firmware" \
+    --apt-recommends false \
+    --linux-packages "linux-image" \
+    --linux-flavours "amd64" \
+    --uefi-secure-boot disable \
+    --debian-installer none \
+    "${@}"

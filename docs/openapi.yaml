@@ -1,0 +1,101 @@
+openapi: 3.0.3
+info:
+  title: Beout_OS Appliance API
+  description: REST API for configuring and monitoring the Beout_OS Security Appliance.
+  version: 1.0.0
+servers:
+  - url: https://{appliance_ip}:8443
+    variables:
+      appliance_ip:
+        default: 127.0.0.1
+        description: IP address of the Beout_OS appliance management interface.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/health:
+    get:
+      summary: Health check
+      description: Returns the health status of the appliance.
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  version:
+                    type: string
+
+  /api/auth/login:
+    post:
+      summary: Login
+      description: Authenticate and receive a session token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        '401':
+          description: Unauthorized
+
+  /api/config:
+    get:
+      summary: Get network configuration
+      responses:
+        '200':
+          description: Configuration retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wan_ip:
+                    type: string
+                  lan_ip:
+                    type: string
+                  mgmt_ip:
+                    type: string
+
+  /api/license:
+    get:
+      summary: Get license status
+      responses:
+        '200':
+          description: License status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string

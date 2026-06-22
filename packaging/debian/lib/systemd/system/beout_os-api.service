@@ -1,0 +1,14 @@
+[Unit]
+Description=Beout_OS REST API Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/beout_os/bin/beout_os_api
+WorkingDirectory=/opt/beout_os/bin
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

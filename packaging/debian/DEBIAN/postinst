@@ -1,0 +1,47 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # Create required directories and set permissions
+    mkdir -p /var/lib/beout_os
+    chmod 755 /var/lib/beout_os
+
+    # Generate self-signed certs for API if they don't exist
+    if [ ! -f /opt/beout_os/bin/server.crt ]; then
+        cd /opt/beout_os/bin
+        openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=localhost" 2>/dev/null
+        chmod 600 server.key
+    fi
+
+    # Reload systemd and enable services safely (ignore errors in chroot)
+    mkdir -p /etc/systemd/system/getty@tty1.service.d/
+    cat <<EOF > /etc/systemd/system/getty@tty1.service.d/override.conf
+[Service]
+ExecStart=
+ExecStart=-/opt/beout_os/bin/beout_os_provisioning
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+Type=idle
+Restart=always
+EOF
+
+    systemctl daemon-reload || true
+    systemctl enable beout_os-api || true
+    systemctl enable beout_os-provisioning || true
+    systemctl enable beout_os-updater.timer || true
+    systemctl start beout_os-updater.timer || true
+    systemctl mask getty@tty2.service getty@tty3.service || true
+
+    # Initialize OS version file
+    if [ ! -f /etc/beout_os_version ]; then
+        echo "1.0.0" > /etc/beout_os_version
+    fi
+
+    # Start API service if not in chroot
+    systemctl restart beout_os-api || true
+    
+    # We do not start provisioning directly here; it will start on tty1 on boot
+fi
+
+exit 0

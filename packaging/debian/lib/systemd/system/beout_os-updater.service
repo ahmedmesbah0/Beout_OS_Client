@@ -1,0 +1,10 @@
+[Unit]
+Description=Beout_OS Background Auto-Updater Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/beout_os/bin/check_updates.sh
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,17 @@
+live-boot
+live-config
+live-config-systemd
+systemd
+systemd-resolved
+debootstrap
+parted
+dosfstools
+e2fsprogs
+gdisk
+grub-common
+grub-pc-bin
+grub-efi-amd64-bin
+xorriso
+isolinux
+sqlite3
+openssl
