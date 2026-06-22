@@ -25,7 +25,20 @@ fi
 # 2. Determine main server URL
 SERVER_URL=$(get_config "license_server_url")
 if [ -z "$SERVER_URL" ]; then
-    SERVER_URL="https://updates.behorus.ai"
+    SERVER_URL="https://update.beout.ai"
+fi
+
+# Connection Security: Configure Curl to verify SSL/TLS certificates by default
+VERIFY_SSL=$(get_config "license_server_verify_ssl")
+CURL_OPTS=""
+if [ "$VERIFY_SSL" != "0" ]; then
+    if [ -f /opt/beout_os/etc/server_ca.pem ]; then
+        CURL_OPTS="--cacert /opt/beout_os/etc/server_ca.pem"
+    else
+        CURL_OPTS=""
+    fi
+else
+    CURL_OPTS="-k"
 fi
 
 # 3. Heartbeat Check-in and License Verification
@@ -34,7 +47,7 @@ if [ -n "$LICENSE_KEY" ]; then
     LOCAL_IP=$(hostname -I | awk '{print $1}')
     
     # Perform HTTP POST heartbeat request
-    HB_RESPONSE=$(curl -s -k -X POST -H "Content-Type: application/json" \
+    HB_RESPONSE=$(curl -s $CURL_OPTS -X POST -H "Content-Type: application/json" \
         -d "{\"machine_id\":\"$MACHINE_ID\",\"license_key\":\"$LICENSE_KEY\",\"machine_ip\":\"$LOCAL_IP\",\"os_version\":\"$CURRENT_VERSION\"}" \
         "$SERVER_URL/api/license/heartbeat" || echo "")
         
@@ -54,7 +67,7 @@ echo "Checking for updates at $UPDATE_URL..."
 
 # Fetch latest.json
 TEMP_JSON=$(mktemp)
-if ! curl -s -k -f -L -o "$TEMP_JSON" "$UPDATE_URL"; then
+if ! curl -s $CURL_OPTS -f -L -o "$TEMP_JSON" "$UPDATE_URL"; then
     echo "Error: Failed to fetch update metadata from $UPDATE_URL"
     rm -f "$TEMP_JSON"
     exit 1
@@ -83,7 +96,7 @@ if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
     echo "New version $LATEST_VERSION is available! Downloading from $DEB_URL..."
     
     TEMP_DEB=$(mktemp -t beout_os-XXXXXX.deb)
-    if ! curl -s -k -f -L -o "$TEMP_DEB" "$DEB_URL"; then
+    if ! curl -s $CURL_OPTS -f -L -o "$TEMP_DEB" "$DEB_URL"; then
         echo "Error: Failed to download update from $DEB_URL"
         rm -f "$TEMP_DEB"
         exit 1

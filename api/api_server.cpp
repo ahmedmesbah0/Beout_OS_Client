@@ -67,7 +67,7 @@ void ApiServer::setup_routes() {
     };
 
     // Health API
-    server_->Get("/api/health", [](const httplib::Request&, httplib::Response& res) {
+    server_->Get("/api/health", [&](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         
         std::string version = "1.0.0";
@@ -77,8 +77,87 @@ void ApiServer::setup_routes() {
             // Trim whitespace/newline
             version.erase(version.find_last_not_of(" \t\r\n") + 1);
         }
-        
-        json response = {{"status", "ok"}, {"version", version}};
+
+        // Get WAN IP from interfaces configuration
+        std::string wan_ip = "Unconfigured";
+        std::string json_str = db_->get_config("network_interfaces_json").value_or("");
+        if (!json_str.empty()) {
+            try {
+                auto interfaces = json::parse(json_str);
+                for (auto& item : interfaces) {
+                    if (item.value("id", "") == "wan") {
+                        wan_ip = item.value("ip", "Unconfigured");
+                        break;
+                    }
+                }
+            } catch (...) {}
+        }
+        if (wan_ip == "Unconfigured" || wan_ip.empty()) {
+            wan_ip = db_->get_config("network_WAN_ip").value_or("Unconfigured");
+        }
+
+        // Check Internet status
+        bool internet_online = false;
+        try {
+            httplib::Client cli("http://1.1.1.1");
+            cli.set_connection_timeout(1, 0);
+            cli.set_read_timeout(1, 0);
+            if (auto r = cli.Get("/")) {
+                internet_online = true;
+            }
+        } catch (...) {}
+
+        // Check licensing/update server status
+        bool server_online = false;
+        std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
+        std::string host = server_url;
+        int port = 443;
+        if (host.rfind("https://", 0) == 0) {
+            host = host.substr(8);
+            port = 443;
+        } else if (host.rfind("http://", 0) == 0) {
+            host = host.substr(7);
+            port = 80;
+        }
+        size_t colon_pos = host.find(':');
+        if (colon_pos != std::string::npos) {
+            try {
+                port = std::stoi(host.substr(colon_pos + 1));
+            } catch (...) {}
+            host = host.substr(0, colon_pos);
+        }
+        try {
+            httplib::Client cli(host, port);
+            if (port == 443) {
+                cli.enable_server_certificate_verification(false);
+            }
+            cli.set_connection_timeout(1, 0);
+            cli.set_read_timeout(1, 0);
+            if (auto r = cli.Get("/api/health")) {
+                server_online = true;
+            } else if (auto r2 = cli.Get("/api/license")) {
+                server_online = true;
+            } else if (auto r3 = cli.Get("/")) {
+                server_online = true;
+            }
+        } catch (...) {}
+
+        // Get hostname
+        std::string hostname = "beoutos";
+        std::ifstream host_file("/etc/hostname");
+        if (host_file.is_open()) {
+            std::getline(host_file, hostname);
+            hostname.erase(hostname.find_last_not_of(" \t\r\n") + 1);
+        }
+
+        json response = {
+            {"status", "ok"},
+            {"version", version},
+            {"hostname", hostname},
+            {"wan_ip", wan_ip},
+            {"internet_status", internet_online ? "online" : "offline"},
+            {"server_status", server_online ? "online" : "offline"}
+        };
         res.set_content(response.dump(), "application/json");
     });
 
@@ -111,18 +190,40 @@ void ApiServer::setup_routes() {
         res.set_header("Access-Control-Allow-Origin", "*");
         if (!check_auth(req, res)) return;
 
+        std::string json_str = db_->get_config("network_interfaces_json").value_or("");
+        json interfaces;
+        if (json_str.empty()) {
+            // Seed defaults from legacy keys or hardcoded values
+            std::string wan_dev = db_->get_config("network_WAN_interface").value_or("eth0");
+            std::string wan_ip = db_->get_config("network_WAN_ip").value_or("192.168.1.100");
+            std::string wan_netmask = db_->get_config("network_WAN_netmask").value_or("255.255.255.0");
+            std::string wan_gateway = db_->get_config("network_WAN_gateway").value_or("192.168.1.1");
+
+            std::string lan_dev = db_->get_config("network_LAN_interface").value_or("eth1");
+            std::string lan_ip = db_->get_config("network_LAN_ip").value_or("10.0.0.1");
+            std::string lan_netmask = db_->get_config("network_LAN_netmask").value_or("255.255.255.0");
+
+            std::string mgmt_dev = db_->get_config("network_MGMT_interface").value_or("eth2");
+            std::string mgmt_ip = db_->get_config("network_MGMT_ip").value_or("192.168.100.99");
+            std::string mgmt_netmask = db_->get_config("network_MGMT_netmask").value_or("255.255.255.0");
+            std::string mgmt_gateway = db_->get_config("network_MGMT_gateway").value_or("192.168.100.1");
+
+            interfaces = json::array({
+                {{"id", "wan"}, {"name", "wan1"}, {"device", wan_dev}, {"ip", wan_ip}, {"netmask", wan_netmask}, {"gateway", wan_gateway}, {"mgmt_access", true}},
+                {{"id", "lan"}, {"name", "lan"}, {"device", lan_dev}, {"ip", lan_ip}, {"netmask", lan_netmask}, {"gateway", ""}, {"mgmt_access", false}},
+                {{"id", "mgmt"}, {"name", "mgmt"}, {"device", mgmt_dev}, {"ip", mgmt_ip}, {"netmask", mgmt_netmask}, {"gateway", mgmt_gateway}, {"mgmt_access", true}}
+            });
+            db_->set_config("network_interfaces_json", interfaces.dump());
+        } else {
+            try {
+                interfaces = json::parse(json_str);
+            } catch (...) {
+                interfaces = json::array();
+            }
+        }
+
         json response = {
-            {"wan_interface", db_->get_config("network_WAN_interface").value_or("")},
-            {"wan_ip", db_->get_config("network_WAN_ip").value_or("")},
-            {"wan_netmask", db_->get_config("network_WAN_netmask").value_or("")},
-            {"wan_gateway", db_->get_config("network_WAN_gateway").value_or("")},
-            {"lan_interface", db_->get_config("network_LAN_interface").value_or("")},
-            {"lan_ip", db_->get_config("network_LAN_ip").value_or("")},
-            {"lan_netmask", db_->get_config("network_LAN_netmask").value_or("")},
-            {"mgmt_interface", db_->get_config("network_MGMT_interface").value_or("")},
-            {"mgmt_ip", db_->get_config("network_MGMT_ip").value_or("")},
-            {"mgmt_netmask", db_->get_config("network_MGMT_netmask").value_or("")},
-            {"mgmt_gateway", db_->get_config("network_MGMT_gateway").value_or("")}
+            {"interfaces", interfaces}
         };
         res.set_content(response.dump(), "application/json");
     });
@@ -134,20 +235,37 @@ void ApiServer::setup_routes() {
 
         try {
             auto body = json::parse(req.body);
-            if (body.contains("wan_interface")) db_->set_config("network_WAN_interface", body["wan_interface"]);
-            if (body.contains("wan_ip")) db_->set_config("network_WAN_ip", body["wan_ip"]);
-            if (body.contains("wan_netmask")) db_->set_config("network_WAN_netmask", body["wan_netmask"]);
-            if (body.contains("wan_gateway")) db_->set_config("network_WAN_gateway", body["wan_gateway"]);
-            
-            if (body.contains("lan_interface")) db_->set_config("network_LAN_interface", body["lan_interface"]);
-            if (body.contains("lan_ip")) db_->set_config("network_LAN_ip", body["lan_ip"]);
-            if (body.contains("lan_netmask")) db_->set_config("network_LAN_netmask", body["lan_netmask"]);
-            
-            if (body.contains("mgmt_interface")) db_->set_config("network_MGMT_interface", body["mgmt_interface"]);
-            if (body.contains("mgmt_ip")) db_->set_config("network_MGMT_ip", body["mgmt_ip"]);
-            if (body.contains("mgmt_netmask")) db_->set_config("network_MGMT_netmask", body["mgmt_netmask"]);
-            if (body.contains("mgmt_gateway")) db_->set_config("network_MGMT_gateway", body["mgmt_gateway"]);
-            
+            if (body.contains("interfaces") && body["interfaces"].is_array()) {
+                db_->set_config("network_interfaces_json", body["interfaces"].dump());
+
+                // Sync back to legacy configurations for compatibility with CLI client
+                for (auto& item : body["interfaces"]) {
+                    std::string id = item.value("id", "");
+                    std::string device = item.value("device", "");
+                    std::string ip = item.value("ip", "");
+                    std::string netmask = item.value("netmask", "");
+                    std::string gateway = item.value("gateway", "");
+
+                    if (id == "wan") {
+                        db_->set_config("network_WAN_interface", device);
+                        db_->set_config("network_WAN_ip", ip);
+                        db_->set_config("network_WAN_netmask", netmask);
+                        db_->set_config("network_WAN_gateway", gateway);
+                    } else if (id == "lan") {
+                        db_->set_config("network_LAN_interface", device);
+                        db_->set_config("network_LAN_ip", ip);
+                        db_->set_config("network_LAN_netmask", netmask);
+                    } else if (id == "mgmt") {
+                        db_->set_config("network_MGMT_interface", device);
+                        db_->set_config("network_MGMT_ip", ip);
+                        db_->set_config("network_MGMT_netmask", netmask);
+                        db_->set_config("network_MGMT_gateway", gateway);
+                    }
+                }
+
+                // Trigger sync network configuration in OS background
+                std::system("/opt/beout_os/bin/sync_network.sh &");
+            }
             res.set_content(json{{"status", "success"}}.dump(), "application/json");
         } catch (const json::parse_error&) {
             res.status = 400;
@@ -174,7 +292,16 @@ void ApiServer::setup_routes() {
         std::string status = db_->get_config("activation_status").value_or("INACTIVE");
         std::string key = db_->get_config("activation_license_key").value_or("");
         std::string machine_id = beout_os::activation::MachineId::get();
-        json response = {{"status", status}, {"license_key", key}, {"machine_id", machine_id}};
+        std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
+        std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
+
+        json response = {
+            {"status", status},
+            {"license_key", key},
+            {"machine_id", machine_id},
+            {"license_server_url", server_url},
+            {"license_server_verify_ssl", verify_ssl}
+        };
         res.set_content(response.dump(), "application/json");
     });
 
@@ -192,8 +319,16 @@ void ApiServer::setup_routes() {
                 return;
             }
 
+            // Save user-provided Licensing Server Settings if they are passed
+            if (body.contains("license_server_url")) {
+                db_->set_config("license_server_url", body["license_server_url"]);
+            }
+            if (body.contains("license_server_verify_ssl")) {
+                db_->set_config("license_server_verify_ssl", body["license_server_verify_ssl"]);
+            }
+
             // Get server URL
-            std::string server_url = db_->get_config("license_server_url").value_or("https://updates.behorus.ai");
+            std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
             std::string machine_id = beout_os::activation::MachineId::get();
 
             // Prepare client HTTP request to Main Server

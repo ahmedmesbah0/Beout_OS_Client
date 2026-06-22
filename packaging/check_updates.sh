@@ -25,7 +25,7 @@ fi
 # 2. Determine main server URL
 SERVER_URL=$(get_config "license_server_url")
 if [ -z "$SERVER_URL" ]; then
-    SERVER_URL="https://updates.behorus.ai"
+    SERVER_URL="https://update.beout.ai"
 fi
 
 # Connection Security: Configure Curl to verify SSL/TLS certificates by default

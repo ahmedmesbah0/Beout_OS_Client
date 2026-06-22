@@ -26,6 +26,7 @@ chmod +x $BASE_DIR/opt/beout_os/bin/check_updates.sh
 
 
 echo "Copying Dashboard UI..."
+rm -rf $BASE_DIR/opt/beout_os/dashboard/dist
 mkdir -p $BASE_DIR/opt/beout_os/dashboard
 cp -r dashboard/dist $BASE_DIR/opt/beout_os/dashboard/
 
