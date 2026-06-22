@@ -13,7 +13,11 @@ npm run build
 cd ..
 ./build.sh iso
 
-to get the Download ISO
+
+# Execute the pre-flight checks
+./build.sh validate
+
+#to get the Download ISO
 cd installer
 python3 -m http.server 8080
 
@@ -27,7 +31,7 @@ cd Beout_OS_Client
 
 
 
-for Update Server
+#for Update Server
 git pull
 systemctl restart beout-server
 systemctl status beout-server
