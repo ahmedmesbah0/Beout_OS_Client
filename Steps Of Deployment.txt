@@ -1,5 +1,9 @@
 
 # for Generate ISO File
+sudo su
+cd Beout_OS_Client/
+git fetch origin
+git reset --hard origin/main
 ./build.sh clean
 ./build.sh configure
 ./build.sh build
@@ -7,7 +11,7 @@ cd dashboard
 npm install
 npm run build
 cd ..
-sudo ./build.sh iso
+./build.sh iso
 cd installer
 python3 -m http.server 8080
 
@@ -18,3 +22,12 @@ python3 -m http.server 8080
 # for Update
 cd Beout_OS_Client
 ./packaging/build_deb.sh
+
+
+
+for Update Server
+git pull
+systemctl restart beout-server
+systemctl status beout-server
+curl -i http://localhost:8000/api/health
+
