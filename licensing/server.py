@@ -35,21 +35,21 @@ class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
         if self.path in ('/api/v1/activate', '/api/license/activate'):
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
-            
+
             try:
                 data = json.loads(post_data.decode('utf-8'))
                 machine_id = data.get('machine_id')
-                
+
                 if not machine_id:
                     self.send_error(400, "Missing machine_id")
                     return
-                
+
                 # Sign the machine_id (Ed25519 requires openssl pkeyutl with a file input)
                 import tempfile
                 with tempfile.NamedTemporaryFile(delete=False) as temp_in:
                     temp_in.write(machine_id.encode('utf-8'))
                     temp_in_path = temp_in.name
-                
+
                 try:
                     process = subprocess.run(
                         ['openssl', 'pkeyutl', '-sign', '-inkey', SIGNING_KEY, '-rawin', '-in', temp_in_path],
@@ -60,18 +60,82 @@ class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
                 finally:
                     if os.path.exists(temp_in_path):
                         os.unlink(temp_in_path)
-                
+
                 response = {
                     'status': 'success',
                     'token': signature,
                     'activation_token': signature
                 }
-                
+
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode('utf-8'))
-                
+
+            except Exception as e:
+                self.send_error(500, f"Internal Server Error: {str(e)}")
+        elif self.path == '/api/license/verify':
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                machine_id = data.get('machine_id')
+                signature = data.get('signature')
+
+                if not machine_id:
+                    self.send_error(400, "Missing machine_id")
+                    return
+
+                if not signature:
+                    self.send_error(400, "Missing signature")
+                    return
+
+                # Verify the signature using the public key
+                import tempfile
+                # Write machine_id to temporary file
+                with tempfile.NamedTemporaryFile(delete=False) as temp_in:
+                    temp_in.write(machine_id.encode('utf-8'))
+                    temp_in_path = temp_in.name
+
+                # Write signature to temporary file (base64 decode)
+                signature_bytes = base64.b64decode(signature)
+                with tempfile.NamedTemporaryFile(delete=False) as temp_sig:
+                    temp_sig.write(signature_bytes)
+                    temp_sig_path = temp_sig.name
+
+                try:
+                    # Verify the signature using the public key
+                    process = subprocess.run(
+                        ['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', 'signing.pub', '-signature', temp_sig_path, '-in', temp_in_path],
+                        capture_output=True,
+                        check=True
+                    )
+
+                    # If we get here, verification was successful
+                    response = {
+                        'status': 'valid',
+                        'message': 'Signature is valid'
+                    }
+
+                except subprocess.CalledProcessError:
+                    # Verification failed
+                    response = {
+                        'status': 'invalid',
+                        'message': 'Signature is invalid'
+                    }
+
+                finally:
+                    if os.path.exists(temp_in_path):
+                        os.unlink(temp_in_path)
+                    if os.path.exists(temp_sig_path):
+                        os.unlink(temp_sig_path)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+
             except Exception as e:
                 self.send_error(500, f"Internal Server Error: {str(e)}")
         else:
@@ -80,14 +144,14 @@ class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
 def main():
     generate_certs()
     generate_signing_key()
-    
+
     server = http.server.HTTPServer((HOST, PORT), LicensingRequestHandler)
-    
+
     # Wrap with SSL
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
     server.socket = context.wrap_socket(server.socket, server_side=True)
-    
+
     print(f"Mock Licensing Server running on https://{HOST}:{PORT}")
     try:
         server.serve_forever()
