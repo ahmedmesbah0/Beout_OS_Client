@@ -22,11 +22,11 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -D_FORTIFY_SOURCE=2 
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined,leak")
 
 # Dependencies
+include(FetchContent)
 find_package(OpenSSL)
 find_package(SQLite3)
 
 if(BUILD_TESTING)
-  include(FetchContent)
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git

@@ -19,6 +19,7 @@ private:
 
     void print_menu();
     void configure_interface(const std::string& iface);
+    void sync_legacy_to_json();
     void factory_reset();
     void reboot();
     void shutdown();

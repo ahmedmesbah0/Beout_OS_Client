@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <vector>
+#include <json.hpp>
 
 namespace beout_os {
 namespace provisioning {
@@ -105,12 +106,31 @@ void CliEngine::configure_interface(const std::string& iface) {
         }
     }
 
+    // Prevent duplicate device assignments across different roles
+    std::vector<std::string> roles = {"WAN", "LAN", "MGMT"};
+    for (const auto& r : roles) {
+        if (r != iface) {
+            auto current_dev = db_->get_config("network_" + r + "_interface").value_or("");
+            if (!current_dev.empty() && current_dev == selected_iface) {
+                db_->set_config("network_" + r + "_interface", "");
+                db_->set_config("network_" + r + "_ip", "");
+                db_->set_config("network_" + r + "_netmask", "");
+                if (r == "WAN" || r == "MGMT") {
+                    db_->set_config("network_" + r + "_gateway", "");
+                }
+            }
+        }
+    }
+
     db_->set_config("network_" + iface + "_interface", selected_iface);
     db_->set_config("network_" + iface + "_ip", ip);
     db_->set_config("network_" + iface + "_netmask", netmask);
     if (iface == "WAN" || iface == "MGMT") {
         db_->set_config("network_" + iface + "_gateway", gateway);
     }
+
+    // Synchronize to network_interfaces_json for API/dashboard compatibility
+    sync_legacy_to_json();
 
     // Apply the IP address immediately to the live interface using ip(8)
     // Convert netmask (e.g. 255.255.255.0) to CIDR prefix length
@@ -157,6 +177,30 @@ void CliEngine::configure_interface(const std::string& iface) {
     std::cout << iface << " configured successfully on " << selected_iface << ".\n";
 }
 
+void CliEngine::sync_legacy_to_json() {
+    auto wan_dev = db_->get_config("network_WAN_interface").value_or("");
+    auto wan_ip = db_->get_config("network_WAN_ip").value_or("");
+    auto wan_netmask = db_->get_config("network_WAN_netmask").value_or("");
+    auto wan_gateway = db_->get_config("network_WAN_gateway").value_or("");
+
+    auto lan_dev = db_->get_config("network_LAN_interface").value_or("");
+    auto lan_ip = db_->get_config("network_LAN_ip").value_or("");
+    auto lan_netmask = db_->get_config("network_LAN_netmask").value_or("");
+
+    auto mgmt_dev = db_->get_config("network_MGMT_interface").value_or("");
+    auto mgmt_ip = db_->get_config("network_MGMT_ip").value_or("");
+    auto mgmt_netmask = db_->get_config("network_MGMT_netmask").value_or("");
+    auto mgmt_gateway = db_->get_config("network_MGMT_gateway").value_or("");
+
+    nlohmann::json interfaces = nlohmann::json::array({
+        {{"id", "wan"}, {"name", "wan"}, {"device", wan_dev}, {"ip", wan_ip}, {"netmask", wan_netmask}, {"gateway", wan_gateway}, {"mgmt_access", true}},
+        {{"id", "lan"}, {"name", "lan"}, {"device", lan_dev}, {"ip", lan_ip}, {"netmask", lan_netmask}, {"gateway", ""}, {"mgmt_access", false}},
+        {{"id", "mgmt"}, {"name", "mgmt"}, {"device", mgmt_dev}, {"ip", mgmt_ip}, {"netmask", mgmt_netmask}, {"gateway", mgmt_gateway}, {"mgmt_access", true}}
+    });
+
+    db_->set_config("network_interfaces_json", interfaces.dump());
+}
+
 void CliEngine::factory_reset() {
     std::cout << "\nWARNING: This will erase all configuration. Continue? (y/N): ";
     std::string confirm;
@@ -174,6 +218,11 @@ void CliEngine::factory_reset() {
         db_->set_config("network_MGMT_ip", "");
         db_->set_config("network_MGMT_netmask", "");
         db_->set_config("network_MGMT_gateway", "");
+        db_->set_config("network_interfaces_json", "");
+
+        // Apply clean network setup (reset interfaces.d on disk)
+        (void)std::system("/opt/beout_os/bin/sync_network.sh");
+
         std::cout << "Factory reset complete. Please reboot.\n";
     }
 }
