@@ -374,6 +374,12 @@ install_beout_os() {
         rm -f /tmp/beout_os-core.deb
     " >> "$LOG_FILE" 2>&1 || die "Failed to install Beout_OS package."
 
+    # Backup copy of the public verification key to target system
+    if [ -f "/opt/beout_os/etc/license_public_key.pem" ]; then
+        mkdir -p "${TARGET_MNT}/opt/beout_os/etc"
+        cp "/opt/beout_os/etc/license_public_key.pem" "${TARGET_MNT}/opt/beout_os/etc/license_public_key.pem"
+    fi
+
     log "Beout_OS package installed successfully."
 }
 
