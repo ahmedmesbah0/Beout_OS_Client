@@ -81,6 +81,10 @@ function build_iso() {
     # Copy the .deb package (the installer will dpkg -i this into the target disk)
     cp "${PROJECT_ROOT}/beout_os-core.deb" "${CHROOT_DIR}/opt/beout_os/installer/"
 
+    # Copy the public verification key (used by updater and activation)
+    mkdir -p "${CHROOT_DIR}/opt/beout_os/etc"
+    cp "${PROJECT_ROOT}/packaging/debian/opt/beout_os/etc/license_public_key.pem" "${CHROOT_DIR}/opt/beout_os/etc/"
+
     # Copy the hardening script (the installer will run this inside the target chroot)
     cp "${PROJECT_ROOT}/hardening/harden.sh" "${CHROOT_DIR}/opt/beout_os/installer/"
     chmod +x "${CHROOT_DIR}/opt/beout_os/installer/harden.sh"
