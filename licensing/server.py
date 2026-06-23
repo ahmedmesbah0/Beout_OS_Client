@@ -32,7 +32,7 @@ def generate_signing_key():
 
 class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == '/api/v1/activate':
+        if self.path in ('/api/v1/activate', '/api/license/activate'):
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
             
@@ -63,7 +63,8 @@ class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
                 
                 response = {
                     'status': 'success',
-                    'token': signature
+                    'token': signature,
+                    'activation_token': signature
                 }
                 
                 self.send_response(200)
