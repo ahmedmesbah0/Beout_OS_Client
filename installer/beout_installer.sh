@@ -404,36 +404,31 @@ apply_hardening() {
 install_bootloader() {
     step "Installing GRUB bootloader"
 
+    # GRUB binaries are pre-installed in the live ISO and were cloned to the
+    # target disk in install_base_system(). We just need to run grub-install.
+
     if $IS_EFI; then
         chroot "${TARGET_MNT}" /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
-            dpkg -i /opt/beout_os/installer/packages/grub-common_*.deb \
-                    /opt/beout_os/installer/packages/grub2-common_*.deb \
-                    /opt/beout_os/installer/packages/ucf_*.deb \
-                    /opt/beout_os/installer/packages/libfile-copy-recursive-perl_*.deb \
-                    /opt/beout_os/installer/packages/grub-efi-amd64-bin_*.deb \
-                    /opt/beout_os/installer/packages/grub-efi-amd64_*.deb || true
-            apt-get -f install -y -qq
-            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=beoutos --recheck
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+                --bootloader-id=beoutos --recheck --no-nvram || \
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+                --bootloader-id=beoutos --recheck
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB EFI installation failed."
     else
         chroot "${TARGET_MNT}" /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
-            dpkg -i /opt/beout_os/installer/packages/grub-common_*.deb \
-                    /opt/beout_os/installer/packages/grub2-common_*.deb \
-                    /opt/beout_os/installer/packages/ucf_*.deb \
-                    /opt/beout_os/installer/packages/libfile-copy-recursive-perl_*.deb \
-                    /opt/beout_os/installer/packages/grub-pc-bin_*.deb \
-                    /opt/beout_os/installer/packages/grub-pc_*.deb || true
-            apt-get -f install -y -qq
             grub-install --target=i386-pc ${TARGET_DISK}
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB BIOS installation failed."
     fi
 
-    # Customize GRUB for appliance mode
-    sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/' "${TARGET_MNT}/etc/default/grub" 2>/dev/null || true
+    # Customize GRUB for appliance mode (instant boot, no menu)
+    sed -i \
+        -e 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/' \
+        -e 's/GRUB_TIMEOUT=10/GRUB_TIMEOUT=0/' \
+        "${TARGET_MNT}/etc/default/grub" 2>/dev/null || true
     chroot "${TARGET_MNT}" update-grub >> "$LOG_FILE" 2>&1 || true
 
     log "Bootloader installed."
