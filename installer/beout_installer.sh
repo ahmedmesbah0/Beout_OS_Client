@@ -406,6 +406,7 @@ install_bootloader() {
         " >> "$LOG_FILE" 2>&1 || die "GRUB EFI installation failed."
     else
         chroot "${TARGET_MNT}" /bin/bash -c "
+            apt-get install -y -qq grub-pc
             grub-install --target=i386-pc ${TARGET_DISK}
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB BIOS installation failed."
