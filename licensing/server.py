@@ -44,15 +44,22 @@ class LicensingRequestHandler(http.server.BaseHTTPRequestHandler):
                     self.send_error(400, "Missing machine_id")
                     return
                 
-                # Sign the machine_id
-                process = subprocess.run(
-                    ['openssl', 'dgst', '-sign', SIGNING_KEY],
-                    input=machine_id.encode('utf-8'),
-                    capture_output=True,
-                    check=True
-                )
+                # Sign the machine_id (Ed25519 requires openssl pkeyutl with a file input)
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False) as temp_in:
+                    temp_in.write(machine_id.encode('utf-8'))
+                    temp_in_path = temp_in.name
                 
-                signature = base64.b64encode(process.stdout).decode('utf-8')
+                try:
+                    process = subprocess.run(
+                        ['openssl', 'pkeyutl', '-sign', '-inkey', SIGNING_KEY, '-rawin', '-in', temp_in_path],
+                        capture_output=True,
+                        check=True
+                    )
+                    signature = base64.b64encode(process.stdout).decode('utf-8')
+                finally:
+                    if os.path.exists(temp_in_path):
+                        os.unlink(temp_in_path)
                 
                 response = {
                     'status': 'success',
