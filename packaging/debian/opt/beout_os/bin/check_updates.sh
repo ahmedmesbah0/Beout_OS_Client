@@ -63,30 +63,6 @@ if [ -n "$LICENSE_KEY" ]; then
         sqlite3 -cmd ".timeout 5000" "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_token', '');"
         exit 0
     fi
-
-    # Extract and apply Timezone & NTP Server from Central licensing server
-    if command -v jq >/dev/null 2>&1; then
-        TIMEZONE=$(echo "$HB_RESPONSE" | jq -r '.timezone // empty' 2>/dev/null || echo "")
-        TIME_SERVER=$(echo "$HB_RESPONSE" | jq -r '.time_server // empty' 2>/dev/null || echo "")
-    else
-        TIMEZONE=$(echo "$HB_RESPONSE" | grep -o '"timezone": "[^"]*' | grep -o '[^"]*$' || echo "")
-        TIME_SERVER=$(echo "$HB_RESPONSE" | grep -o '"time_server": "[^"]*' | grep -o '[^"]*$' || echo "")
-    fi
-
-    if [ -n "$TIMEZONE" ]; then
-        echo "Syncing system timezone from central licensing server: $TIMEZONE"
-        sqlite3 -cmd ".timeout 5000" "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('system_timezone', '$TIMEZONE');"
-        timedatectl set-timezone "$TIMEZONE" 2>/dev/null || ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime || true
-    fi
-
-    if [ -n "$TIME_SERVER" ]; then
-        echo "Syncing system NTP server from central licensing server: $TIME_SERVER"
-        sqlite3 -cmd ".timeout 5000" "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('system_ntp_server', '$TIME_SERVER');"
-        if [ -f /etc/systemd/timesyncd.conf ]; then
-            sed -i "s/^#\?NTP=.*/NTP=$TIME_SERVER/" /etc/systemd/timesyncd.conf
-            systemctl restart systemd-timesyncd 2>/dev/null || true
-        fi
-    fi
 fi
 
 # 4. Check for software updates
