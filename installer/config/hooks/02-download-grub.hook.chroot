@@ -13,4 +13,4 @@ mkdir -p /opt/beout_os/installer/packages
 cd /opt/beout_os/installer/packages
 
 # Download GRUB packages and dependencies
-apt-get download -y -qq grub-pc grub-pc-bin grub-efi-amd64 grub-efi-amd64-bin grub2-common grub-common ucf libfile-copy-recursive-perl
+apt-get download grub-pc grub-pc-bin grub-efi-amd64 grub-efi-amd64-bin grub2-common grub-common ucf libfile-copy-recursive-perl
