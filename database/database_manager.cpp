@@ -61,7 +61,7 @@ bool DatabaseManager::set_config(const std::string& key, const std::string& valu
     
     // Trigger OS-level config sync script asynchronously
     if (success && key.find("network_") == 0) {
-        int res = std::system("sudo /opt/beout_os/bin/sync_network.sh &");
+        int res = std::system("/opt/beout_os/bin/sync_network.sh &");
         if (res != 0) {
             std::cerr << "Warning: Failed to launch sync_network.sh (exit code: " << res << ")" << std::endl;
         }

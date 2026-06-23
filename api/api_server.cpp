@@ -341,7 +341,7 @@ void ApiServer::setup_routes() {
                 }
 
                 // Trigger sync network configuration in OS background
-                if (std::system("sudo /opt/beout_os/bin/sync_network.sh &") != 0) {
+                if (std::system("/opt/beout_os/bin/sync_network.sh &") != 0) {
                     std::cerr << "Warning: Failed to launch sync_network.sh background process." << std::endl;
                 }
             }
@@ -358,7 +358,7 @@ void ApiServer::setup_routes() {
          if (!check_auth(req, res)) return;
  
          // Run check_updates.sh in the background
-         if (std::system("sudo /opt/beout_os/bin/check_updates.sh &") != 0) {
+         if (std::system("/opt/beout_os/bin/check_updates.sh &") != 0) {
              std::cerr << "Warning: Failed to launch check_updates.sh background process." << std::endl;
          }
          

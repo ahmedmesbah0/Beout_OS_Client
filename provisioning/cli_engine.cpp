@@ -111,7 +111,49 @@ void CliEngine::configure_interface(const std::string& iface) {
     if (iface == "WAN" || iface == "MGMT") {
         db_->set_config("network_" + iface + "_gateway", gateway);
     }
-    
+
+    // Apply the IP address immediately to the live interface using ip(8)
+    // Convert netmask (e.g. 255.255.255.0) to CIDR prefix length
+    auto netmask_to_cidr = [](const std::string& nm) -> int {
+        int bits = 0;
+        unsigned int val = 0;
+        // Parse each octet
+        int oct = 0;
+        unsigned int byte = 0;
+        for (char c : nm + ".") {
+            if (c == '.') {
+                val = (val << 8) | byte;
+                byte = 0;
+                oct++;
+            } else if (c >= '0' && c <= '9') {
+                byte = byte * 10 + (c - '0');
+            }
+        }
+        while (val) { bits += (val & 1); val >>= 1; }
+        return bits;
+    };
+    int prefix = netmask_to_cidr(netmask);
+
+    // Bring interface up and assign address
+    std::string cmd_flush = "ip addr flush dev " + selected_iface + " 2>/dev/null || true";
+    std::string cmd_addr  = "ip addr add " + ip + "/" + std::to_string(prefix) +
+                            " dev " + selected_iface;
+    std::string cmd_link  = "ip link set " + selected_iface + " up";
+
+    std::system(cmd_flush.c_str());
+    std::system(cmd_addr.c_str());
+    std::system(cmd_link.c_str());
+
+    // Add default route for WAN and MGMT
+    if ((iface == "WAN" || iface == "MGMT") && !gateway.empty()) {
+        std::string cmd_route = "ip route add default via " + gateway +
+                                " dev " + selected_iface + " 2>/dev/null || true";
+        std::system(cmd_route.c_str());
+    }
+
+    // Persist to /etc/network/interfaces for reboots (no sudo needed — running as root)
+    std::system("/opt/beout_os/bin/sync_network.sh");
+
     std::cout << iface << " configured successfully on " << selected_iface << ".\n";
 }
 
