@@ -30,3 +30,4 @@ ca-certificates
 locales
 rsync
 tar
+sudo

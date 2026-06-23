@@ -103,8 +103,8 @@ version_gt() {
     [ "$1" = "$(echo -e "$1\n$2" | sort -V | tail -n1)" ] && [ "$1" != "$2" ]
 }
 
-if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
-    echo "New version $LATEST_VERSION is available! Downloading from $DEB_URL..."
+if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+    echo "Target version $LATEST_VERSION is different from current version $CURRENT_VERSION. Syncing..."
     
     TEMP_DEB=$(mktemp -t beout_os-XXXXXX.deb)
     if ! curl -s $CURL_OPTS -f -L -o "$TEMP_DEB" "$DEB_URL"; then
@@ -127,7 +127,7 @@ if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
     
     echo "Installing update package..."
     export DEBIAN_FRONTEND=noninteractive
-    if dpkg -i "$TEMP_DEB"; then
+    if dpkg --force-downgrade -i "$TEMP_DEB"; then
         echo "Update installed successfully to version $LATEST_VERSION."
         echo "$LATEST_VERSION" > /etc/beout_os_version
     else

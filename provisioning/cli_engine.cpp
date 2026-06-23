@@ -160,19 +160,22 @@ void CliEngine::configure_interface(const std::string& iface) {
                             " dev " + selected_iface;
     std::string cmd_link  = "ip link set " + selected_iface + " up";
 
-    std::system(cmd_flush.c_str());
-    std::system(cmd_addr.c_str());
-    std::system(cmd_link.c_str());
+    int r1 = std::system(cmd_flush.c_str());
+    int r2 = std::system(cmd_addr.c_str());
+    int r3 = std::system(cmd_link.c_str());
+    (void)r1; (void)r2; (void)r3;
 
     // Add default route for WAN and MGMT
     if ((iface == "WAN" || iface == "MGMT") && !gateway.empty()) {
         std::string cmd_route = "ip route add default via " + gateway +
                                 " dev " + selected_iface + " 2>/dev/null || true";
-        std::system(cmd_route.c_str());
+        int r4 = std::system(cmd_route.c_str());
+        (void)r4;
     }
 
     // Persist to /etc/network/interfaces for reboots (no sudo needed — running as root)
-    std::system("/opt/beout_os/bin/sync_network.sh");
+    int r5 = std::system("/opt/beout_os/bin/sync_network.sh");
+    (void)r5;
 
     std::cout << iface << " configured successfully on " << selected_iface << ".\n";
 }
@@ -221,7 +224,8 @@ void CliEngine::factory_reset() {
         db_->set_config("network_interfaces_json", "");
 
         // Apply clean network setup (reset interfaces.d on disk)
-        (void)std::system("/opt/beout_os/bin/sync_network.sh");
+        int r_sync = std::system("/opt/beout_os/bin/sync_network.sh");
+        (void)r_sync;
 
         std::cout << "Factory reset complete. Please reboot.\n";
     }

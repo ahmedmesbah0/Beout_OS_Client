@@ -17,6 +17,90 @@ auto lo
 iface lo inet loopback
 EOF
 
+# Helper to convert netmask to CIDR prefix
+mask2cidr() {
+    case "$1" in
+        255.255.255.255) echo 32 ;;
+        255.255.255.254) echo 31 ;;
+        255.255.255.252) echo 30 ;;
+        255.255.255.248) echo 29 ;;
+        255.255.255.240) echo 28 ;;
+        255.255.255.224) echo 27 ;;
+        255.255.255.192) echo 26 ;;
+        255.255.255.128) echo 25 ;;
+        255.255.255.0)   echo 24 ;;
+        255.255.254.0)   echo 23 ;;
+        255.255.252.0)   echo 22 ;;
+        255.255.248.0)   echo 21 ;;
+        255.255.240.0)   echo 20 ;;
+        255.255.224.0)   echo 19 ;;
+        255.255.192.0)   echo 18 ;;
+        255.255.128.0)   echo 17 ;;
+        255.255.0.0)     echo 16 ;;
+        255.254.0.0)     echo 15 ;;
+        255.252.0.0)     echo 14 ;;
+        255.248.0.0)     echo 13 ;;
+        255.240.0.0)     echo 12 ;;
+        255.224.0.0)     echo 11 ;;
+        255.192.0.0)     echo 10 ;;
+        255.128.0.0)     echo 9 ;;
+        255.0.0.0)       echo 8 ;;
+        254.0.0.0)       echo 7 ;;
+        252.0.0.0)       echo 6 ;;
+        248.0.0.0)       echo 5 ;;
+        240.0.0.0)       echo 4 ;;
+        224.0.0.0)       echo 3 ;;
+        192.0.0.0)       echo 2 ;;
+        128.0.0.0)       echo 1 ;;
+        0.0.0.0)         echo 0 ;;
+        *)               echo 24 ;; # Default fallback
+    esac
+}
+
+# Helper to apply the configuration immediately to the live system
+apply_interface_live() {
+    local dev="$1"
+    local ip="$2"
+    local netmask="$3"
+    local gateway="$4"
+    local metric="$5"
+
+    if [ -n "$dev" ] && [ -n "$ip" ]; then
+        # Check if device exists in system
+        if ip link show "$dev" >/dev/null 2>&1; then
+            echo "Applying $ip to $dev live..."
+            
+            # Determine prefix length
+            local prefix=24
+            if [ -n "$netmask" ]; then
+                prefix=$(mask2cidr "$netmask")
+            fi
+            
+            # Flush existing IP addresses to avoid conflicts
+            ip addr flush dev "$dev" 2>/dev/null || true
+            
+            # Add new IP address
+            ip addr add "$ip/$prefix" dev "$dev" 2>/dev/null || true
+            
+            # Bring link up
+            ip link set "$dev" up 2>/dev/null || true
+            
+            # Apply gateway if specified
+            if [ -n "$gateway" ]; then
+                # Delete existing default route on this device
+                ip route del default dev "$dev" 2>/dev/null || true
+                
+                # Add route with metric
+                if [ -n "$metric" ]; then
+                    ip route add default via "$gateway" dev "$dev" metric "$metric" 2>/dev/null || true
+                else
+                    ip route add default via "$gateway" dev "$dev" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+}
+
 # Call sqlite3 and jq helper to generate custom interfaces
 INTERFACES_JSON=$(sqlite3 "$DB_PATH" "PRAGMA busy_timeout=5000; SELECT value FROM config WHERE key='network_interfaces_json';" 2>/dev/null || echo "")
 
@@ -47,6 +131,15 @@ if [ -n "$INTERFACES_JSON" ] && echo "$INTERFACES_JSON" | jq -e '. | type == "ar
                 fi
             fi
             echo "" >> "$INTERFACES_FILE"
+
+            # Apply configuration live immediately
+            METRIC=""
+            if [ "$ID" = "wan" ]; then
+                METRIC="100"
+            elif [ "$ID" = "mgmt" ]; then
+                METRIC="200"
+            fi
+            apply_interface_live "$DEVICE" "$IP" "$NETMASK" "$GATEWAY" "$METRIC"
         fi
     done
 else
@@ -87,6 +180,7 @@ else
             echo "    metric 100" >> "$INTERFACES_FILE"
         fi
         echo "" >> "$INTERFACES_FILE"
+        apply_interface_live "$WAN_DEV" "$WAN_IP" "$WAN_NET" "$WAN_GW" "100"
     fi
 
     if [ -n "$LAN_IP" ]; then
@@ -95,6 +189,7 @@ else
         echo "    address $LAN_IP" >> "$INTERFACES_FILE"
         echo "    netmask $LAN_NET" >> "$INTERFACES_FILE"
         echo "" >> "$INTERFACES_FILE"
+        apply_interface_live "$LAN_DEV" "$LAN_IP" "$LAN_NET" "" ""
     fi
 
     if [ -n "$MGMT_IP" ]; then
@@ -107,6 +202,7 @@ else
             echo "    metric 200" >> "$INTERFACES_FILE"
         fi
         echo "" >> "$INTERFACES_FILE"
+        apply_interface_live "$MGMT_DEV" "$MGMT_IP" "$MGMT_NET" "$MGMT_GW" "200"
     fi
 fi
 
