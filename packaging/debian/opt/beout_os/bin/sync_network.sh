@@ -25,6 +25,7 @@ if [ -n "$INTERFACES_JSON" ] && echo "$INTERFACES_JSON" | jq -e '. | type == "ar
     
     # Extract interfaces from JSON array
     echo "$INTERFACES_JSON" | jq -c '.[]' | while read -r iface; do
+        ID=$(echo "$iface" | jq -r '.id // empty' | tr -d '[:space:]')
         DEVICE=$(echo "$iface" | jq -r '.device // empty' | tr -d '[:space:]')
         IP=$(echo "$iface" | jq -r '.ip // empty' | tr -d '[:space:]')
         NETMASK=$(echo "$iface" | jq -r '.netmask // empty' | tr -d '[:space:]')
@@ -39,6 +40,11 @@ if [ -n "$INTERFACES_JSON" ] && echo "$INTERFACES_JSON" | jq -e '. | type == "ar
             fi
             if [ -n "$GATEWAY" ]; then
                 echo "    gateway $GATEWAY" >> "$INTERFACES_FILE"
+                if [ "$ID" = "wan" ]; then
+                    echo "    metric 100" >> "$INTERFACES_FILE"
+                elif [ "$ID" = "mgmt" ]; then
+                    echo "    metric 200" >> "$INTERFACES_FILE"
+                fi
             fi
             echo "" >> "$INTERFACES_FILE"
         fi
@@ -76,7 +82,10 @@ else
         echo "iface $WAN_DEV inet static" >> "$INTERFACES_FILE"
         echo "    address $WAN_IP" >> "$INTERFACES_FILE"
         echo "    netmask $WAN_NET" >> "$INTERFACES_FILE"
-        [ -n "$WAN_GW" ] && echo "    gateway $WAN_GW" >> "$INTERFACES_FILE"
+        if [ -n "$WAN_GW" ]; then
+            echo "    gateway $WAN_GW" >> "$INTERFACES_FILE"
+            echo "    metric 100" >> "$INTERFACES_FILE"
+        fi
         echo "" >> "$INTERFACES_FILE"
     fi
 
@@ -93,7 +102,10 @@ else
         echo "iface $MGMT_DEV inet static" >> "$INTERFACES_FILE"
         echo "    address $MGMT_IP" >> "$INTERFACES_FILE"
         echo "    netmask $MGMT_NET" >> "$INTERFACES_FILE"
-        [ -n "$MGMT_GW" ] && echo "    gateway $MGMT_GW" >> "$INTERFACES_FILE"
+        if [ -n "$MGMT_GW" ]; then
+            echo "    gateway $MGMT_GW" >> "$INTERFACES_FILE"
+            echo "    metric 200" >> "$INTERFACES_FILE"
+        fi
         echo "" >> "$INTERFACES_FILE"
     fi
 fi
