@@ -522,7 +522,7 @@ void ApiServer::setup_routes() {
                 db_->set_config("system_timezone", timezone);
                 // System command to set timezone
                 std::string cmd = "timedatectl set-timezone " + timezone + " 2>/dev/null || ln -sf /usr/share/zoneinfo/" + timezone + " /etc/localtime";
-                std::system(cmd.c_str());
+                (void)std::system(cmd.c_str());
             }
 
             if (!ntp_server.empty()) {
@@ -531,7 +531,7 @@ void ApiServer::setup_routes() {
                 std::ifstream t_file("/etc/systemd/timesyncd.conf");
                 if (t_file.good()) {
                     std::string cmd = "sed -i 's/^#\\?NTP=.*/NTP=" + ntp_server + "/' /etc/systemd/timesyncd.conf && systemctl restart systemd-timesyncd 2>/dev/null";
-                    std::system(cmd.c_str());
+                    (void)std::system(cmd.c_str());
                 }
             }
 
