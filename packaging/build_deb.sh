@@ -5,14 +5,21 @@ set -e
 
 BASE_DIR="$(pwd)/packaging/debian"
 
-echo "Building Beout_OS C++ components inside a Debian Bookworm Docker container to ensure GLIBC compatibility..."
-docker run --rm -v "$(pwd)":/workspace -w /workspace debian:bookworm-slim sh -c "
-    apt-get update -qq &&
-    apt-get install -y -qq build-essential cmake libssl-dev libsqlite3-dev &&
-    ./build.sh clean &&
-    ./build.sh configure &&
+if command -v docker >/dev/null 2>&1; then
+    echo "Building Beout_OS C++ components inside a Debian Bookworm Docker container to ensure GLIBC compatibility..."
+    docker run --rm -v "$(pwd)":/workspace -w /workspace debian:bookworm-slim sh -c "
+        apt-get update -qq &&
+        apt-get install -y -qq build-essential cmake libssl-dev libsqlite3-dev &&
+        ./build.sh clean &&
+        ./build.sh configure &&
+        ./build.sh build
+    "
+else
+    echo "Docker not detected. Falling back to native build on the host..."
+    ./build.sh clean
+    ./build.sh configure
     ./build.sh build
-"
+fi
 
 echo "Building Dashboard..."
 cd dashboard
