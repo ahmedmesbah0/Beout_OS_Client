@@ -4,9 +4,14 @@ set -e
 
 DB_PATH="/var/lib/beout_os/config.db"
 
+# Helper to run sqlite3 as the beout_api user
+db_query() {
+    sudo -u beout_api sqlite3 -cmd ".timeout 5000" "$DB_PATH" "$1"
+}
+
 # Helper to get config from sqlite
 get_config() {
-    sqlite3 -cmd ".timeout 5000" "$DB_PATH" "SELECT value FROM config WHERE key='$1';" 2>/dev/null || echo ""
+    db_query "SELECT value FROM config WHERE key='$1';" 2>/dev/null || echo ""
 }
 
 # 1. Get local system details
@@ -59,8 +64,8 @@ if [ -n "$LICENSE_KEY" ]; then
     
     if [ "$HB_STATUS" = "REVOKED" ] || [ "$HB_STATUS" = "INACTIVE" ]; then
         echo "WARNING: License status has been marked as $HB_STATUS by the server. Deactivating appliance."
-        sqlite3 -cmd ".timeout 5000" "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_status', 'INACTIVE');"
-        sqlite3 -cmd ".timeout 5000" "$DB_PATH" "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_token', '');"
+        db_query "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_status', 'INACTIVE');" >/dev/null 2>&1 || true
+        db_query "INSERT OR REPLACE INTO config (key, value) VALUES ('activation_token', '');" >/dev/null 2>&1 || true
         exit 0
     fi
 fi
