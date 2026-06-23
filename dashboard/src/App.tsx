@@ -1093,7 +1093,14 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
     try {
       const res = await fetchWithAuth(`${API_BASE}/license`);
       if (res && res.ok) {
-        const data = await res.json();
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          console.error("Invalid JSON from /api/license:", text);
+          return;
+        }
         setLicense(data);
         if (data.license_server_url) setServerUrlInput(data.license_server_url);
         if (data.license_server_verify_ssl) setVerifySslInput(data.license_server_verify_ssl);
@@ -1130,7 +1137,13 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
       });
       
       if (res) {
-        const data = await res.json();
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          data = { error: text ? (text.length > 200 ? text.substring(0, 200) + '...' : text) : 'Server returned an invalid format.' };
+        }
         if (res.ok) {
           setMessage({ text: 'Subscription settings written. Cryptographic activation validated.', isError: false });
           setLicenseKeyInput('');
