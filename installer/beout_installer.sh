@@ -484,6 +484,10 @@ main() {
     # Trap errors
     trap cleanup EXIT
 
+    # Ensure kernel modules are mapped and the ext4 driver is loaded
+    depmod -a 2>/dev/null || true
+    modprobe ext4 2>/dev/null || true
+
     # Phase 1: Welcome
     show_welcome
 

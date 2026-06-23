@@ -22,6 +22,9 @@ function usage() {
 function clean() {
     echo "Cleaning build directory..."
     rm -rf "${BUILD_DIR}"
+    echo "Cleaning live-build directory..."
+    cd "${PROJECT_ROOT}/installer"
+    sudo lb clean || true
 }
 
 function configure() {
@@ -60,6 +63,7 @@ function build_iso() {
     # Step 2: Configure live-build
     echo "[2/4] Configuring live-build..."
     cd "${PROJECT_ROOT}/installer"
+    sudo lb clean
     lb config
 
     # Step 3: Inject custom installer + packages into the live filesystem
