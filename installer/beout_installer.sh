@@ -404,12 +404,19 @@ apply_hardening() {
 install_bootloader() {
     step "Installing GRUB bootloader"
 
-    # GRUB binaries are pre-installed in the live ISO and were cloned to the
-    # target disk in install_base_system(). We just need to run grub-install.
+    # The live ISO has grub-pc-bin and grub-efi-amd64-bin (which provide the
+    # /usr/lib/grub/i386-pc and /usr/lib/grub/x86_64-efi module directories).
+    # These were cloned to the target disk by install_base_system().
+    #
+    # grub-pc and grub-efi-amd64 conflict with each other so only ONE can be
+    # installed — we install the correct meta-package into the target chroot
+    # via apt-get (target has internet access via bind-mounted networking and
+    # the apt sources we configured in configure_system()).
 
     if $IS_EFI; then
         chroot "${TARGET_MNT}" /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y -qq grub-efi-amd64 grub-efi-amd64-bin
             grub-install --target=x86_64-efi --efi-directory=/boot/efi \
                 --bootloader-id=beoutos --recheck --no-nvram || \
             grub-install --target=x86_64-efi --efi-directory=/boot/efi \
@@ -419,6 +426,7 @@ install_bootloader() {
     else
         chroot "${TARGET_MNT}" /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y -qq grub-pc grub-pc-bin
             grub-install --target=i386-pc ${TARGET_DISK}
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB BIOS installation failed."

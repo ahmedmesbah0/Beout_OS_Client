@@ -12,9 +12,7 @@ e2fsprogs
 gdisk
 grub-common
 grub2-common
-grub-pc
 grub-pc-bin
-grub-efi-amd64
 grub-efi-amd64-bin
 ucf
 libfile-copy-recursive-perl
