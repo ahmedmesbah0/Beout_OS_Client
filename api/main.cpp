@@ -2,7 +2,7 @@
 #include <iostream>
 
 int main() {
-    auto db = std::make_shared<beout_os::database::DatabaseManager>("/var/lib/beout_os/config.db");
+    auto db = std::make_shared<beout_os::database::DatabaseManager>("./config.db");
     if (!db->initialize()) {
         std::cerr << "Failed to initialize database. Exiting." << std::endl;
         return 1;
