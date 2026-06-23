@@ -31,3 +31,5 @@ locales
 rsync
 tar
 sudo
+curl
+
