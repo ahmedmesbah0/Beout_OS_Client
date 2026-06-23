@@ -9,6 +9,7 @@ function Icon({ name, className = "" }: { name: string, className?: string }) {
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('auth_token'));
   const [activeTab, setActiveTab] = useState('dashboard-status');
+  const [health, setHealth] = useState<any>(null);
 
   // Unified fetch helper that handles 401 Unauthorized and auto-logout
   const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
@@ -30,6 +31,22 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!token) return;
+    const getHealth = async () => {
+      try {
+        const res = await fetchWithAuth(`${API_BASE}/health`);
+        if (res && res.ok) {
+          const data = await res.json();
+          setHealth(data);
+        }
+      } catch (err) {}
+    };
+    getHealth();
+    const interval = setInterval(getHealth, 30000);
+    return () => clearInterval(interval);
+  }, [token]);
+
   if (!token) {
     return <Login setToken={setToken} />;
   }
@@ -37,11 +54,11 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100 antialiased">
       {/* Sidebar navigation */}
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} health={health} />
       
       {/* Content wrapper */}
       <div className="flex flex-col flex-1 h-screen overflow-hidden bg-[#070b13]">
-        <Header activeTab={activeTab} setToken={setToken} fetchWithAuth={fetchWithAuth} />
+        <Header activeTab={activeTab} setToken={setToken} health={health} />
         
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
@@ -49,6 +66,7 @@ export default function App() {
             {activeTab === 'dashboard-status' && <DashboardStatus fetchWithAuth={fetchWithAuth} />}
             {activeTab === 'network-interfaces' && <Interfaces fetchWithAuth={fetchWithAuth} />}
             {activeTab === 'system-licensing' && <License fetchWithAuth={fetchWithAuth} />}
+            {activeTab === 'system-time' && <TimeSettings fetchWithAuth={fetchWithAuth} />}
           </div>
         </main>
       </div>
@@ -179,7 +197,7 @@ function Login({ setToken }: { setToken: (t: string) => void }) {
 }
 
 // --- SIDEBAR ---
-function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (tab: string) => void }) {
+function Sidebar({ activeTab, setActiveTab, health }: { activeTab: string, setActiveTab: (tab: string) => void, health: any }) {
   const [expandedGroups, setExpandedGroups] = useState({
     dashboard: true,
     network: true,
@@ -273,6 +291,12 @@ function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab:
               >
                 Licensing
               </button>
+              <button
+                onClick={() => setActiveTab('system-time')}
+                className={`w-full text-left py-1.5 px-3 rounded-md text-sm font-medium transition duration-150 ${activeTab === 'system-time' ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Time Settings
+              </button>
             </div>
           )}
         </div>
@@ -282,7 +306,7 @@ function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab:
       <div className="p-4 border-t border-slate-800/80 bg-slate-900/20 text-xs text-slate-500 font-mono space-y-1">
         <div className="flex items-center justify-between text-slate-400 font-bold">
           <span>beout.ai</span>
-          <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">v1.0.0</span>
+          <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">{health?.version ? `v${health.version}` : 'v1.0.0'}</span>
         </div>
         <div className="text-[10px] text-slate-600">Enterprise Appliance Node</div>
       </div>
@@ -291,25 +315,7 @@ function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab:
 }
 
 // --- HEADER ---
-function Header({ activeTab, setToken, fetchWithAuth }: any) {
-  const [health, setHealth] = useState<any>(null);
-
-  useEffect(() => {
-    // Quick local polling for status badges in the header
-    const getHealth = async () => {
-      try {
-        const res = await fetchWithAuth(`${API_BASE}/health`);
-        if (res && res.ok) {
-          const data = await res.json();
-          setHealth(data);
-        }
-      } catch (err) {}
-    };
-    getHealth();
-    const interval = setInterval(getHealth, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
+function Header({ activeTab, setToken, health }: any) {
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
     setToken(null);
@@ -319,6 +325,7 @@ function Header({ activeTab, setToken, fetchWithAuth }: any) {
     if (activeTab === 'dashboard-status') return 'System Dashboard';
     if (activeTab === 'network-interfaces') return 'Network Interfaces';
     if (activeTab === 'system-licensing') return 'Appliance Licensing';
+    if (activeTab === 'system-time') return 'Time & Timezone Settings';
     return '';
   };
 
@@ -1257,6 +1264,116 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
           : 'Appliance is running in unlicensed evaluation mode. Enter a valid signature key to unlock full enterprise protection.'}
       </div>
 
+    </div>
+  );
+}
+
+// --- TIME SETTINGS COMPONENT ---
+function TimeSettings({ fetchWithAuth }: { fetchWithAuth: any }) {
+  const [timezone, setTimezone] = useState('UTC');
+  const [ntpServer, setNtpServer] = useState('pool.ntp.org');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+  const fetchTimeSettings = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/time`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.timezone) setTimezone(data.timezone);
+        if (data.ntp_server) setNtpServer(data.ntp_server);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchTimeSettings();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/time`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone, ntp_server: ntpServer })
+      });
+      if (res && res.ok) {
+        setMessage({ text: 'Time settings successfully updated on the client appliance.', isError: false });
+        fetchTimeSettings();
+      } else {
+        const data = await res.json();
+        setMessage({ text: data.error || 'Failed to save time settings.', isError: true });
+      }
+    } catch (err) {
+      setMessage({ text: 'Error communicating with local API daemon.', isError: true });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto bg-slate-900/30 border border-slate-800/80 rounded-xl p-6 shadow-lg backdrop-blur-md space-y-6">
+      <div className="flex items-center justify-between pb-4 border-b border-slate-800/80">
+        <div className="flex items-center gap-2.5">
+          <Icon name="schedule" className="text-xl text-blue-500" />
+          <h2 className="font-headline text-base font-bold text-slate-200">Appliance Time & Timezone</h2>
+        </div>
+      </div>
+
+      {message && (
+        <div className={`p-4 rounded-lg text-xs leading-4 border ${message.isError ? 'bg-red-950/30 border-red-800/30 text-red-400' : 'bg-emerald-950/30 border-emerald-800/30 text-emerald-400'}`}>
+          {message.text}
+        </div>
+      )}
+
+      <form onSubmit={handleSave} className="space-y-4">
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 mb-1.5">System Timezone</label>
+          <select
+            className="block w-full rounded bg-slate-950/80 border border-slate-800 px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            value={timezone}
+            onChange={e => setTimezone(e.target.value)}
+            disabled={loading}
+          >
+            <option value="UTC">UTC (Coordinated Universal Time)</option>
+            <option value="Europe/London">Europe/London</option>
+            <option value="Europe/Paris">Europe/Paris</option>
+            <option value="America/New_York">America/New_York</option>
+            <option value="Asia/Riyadh">Asia/Riyadh (Saudi Arabia)</option>
+            <option value="Asia/Dubai">Asia/Dubai (UAE)</option>
+            <option value="Asia/Kuwait">Asia/Kuwait</option>
+            <option value="Africa/Cairo">Africa/Cairo (Egypt)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 mb-1.5">NTP / Time Server</label>
+          <input
+            type="text"
+            className="block w-full rounded bg-slate-950/80 border border-slate-800 px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            placeholder="pool.ntp.org"
+            value={ntpServer}
+            onChange={e => setNtpServer(e.target.value)}
+            required
+            disabled={loading}
+          />
+        </div>
+
+        <div className="pt-3">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2 px-4 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white shadow-md shadow-blue-500/10 transition disabled:opacity-50"
+          >
+            {loading ? 'Saving Settings...' : 'Save Time Settings'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

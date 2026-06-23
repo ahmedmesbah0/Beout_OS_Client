@@ -111,14 +111,18 @@ void ApiServer::stop() {
 }
 
 void ApiServer::setup_routes() {
+    // Set default headers for CORS robustness
+    server_->set_default_headers({
+        {"Access-Control-Allow-Origin", "*"},
+        {"Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PUT"},
+        {"Access-Control-Allow-Headers", "Content-Type, Authorization"}
+    });
+
     // Serve static files from the React app
     server_->set_mount_point("/", "../dashboard/dist");
     
     // CORS Preflight
     server_->Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         res.status = 204;
     });
 
@@ -477,6 +481,61 @@ void ApiServer::setup_routes() {
                 std::string err_msg = s_res ? s_res->body : "{\"error\":\"Failed to connect to license server\"}";
                 res.set_content(err_msg, "application/json");
             }
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+    // GET Client Time & Timezone settings
+    server_->Get("/api/time", [&](const httplib::Request& req, httplib::Response& res) {
+        if (!check_auth(req, res)) return;
+
+        std::string timezone = db_->get_config("system_timezone").value_or("UTC");
+        std::string ntp_server = db_->get_config("system_ntp_server").value_or("pool.ntp.org");
+
+        // Try reading actual OS timezone
+        std::ifstream tz_file("/etc/timezone");
+        if (tz_file.is_open()) {
+            std::getline(tz_file, timezone);
+            // Trim whitespace/newline
+            timezone.erase(timezone.find_last_not_of(" \t\r\n") + 1);
+        }
+
+        json response = {
+            {"timezone", timezone},
+            {"ntp_server", ntp_server}
+        };
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // POST Client Time & Timezone settings
+    server_->Post("/api/time", [&](const httplib::Request& req, httplib::Response& res) {
+        if (!check_auth(req, res)) return;
+
+        try {
+            auto body = json::parse(req.body);
+            std::string timezone = body.value("timezone", "");
+            std::string ntp_server = body.value("ntp_server", "");
+
+            if (!timezone.empty()) {
+                db_->set_config("system_timezone", timezone);
+                // System command to set timezone
+                std::string cmd = "timedatectl set-timezone " + timezone + " 2>/dev/null || ln -sf /usr/share/zoneinfo/" + timezone + " /etc/localtime";
+                std::system(cmd.c_str());
+            }
+
+            if (!ntp_server.empty()) {
+                db_->set_config("system_ntp_server", ntp_server);
+                // System command to set NTP server in systemd-timesyncd config
+                std::ifstream t_file("/etc/systemd/timesyncd.conf");
+                if (t_file.good()) {
+                    std::string cmd = "sed -i 's/^#\\?NTP=.*/NTP=" + ntp_server + "/' /etc/systemd/timesyncd.conf && systemctl restart systemd-timesyncd 2>/dev/null";
+                    std::system(cmd.c_str());
+                }
+            }
+
+            res.set_content(json{{"status", "success"}}.dump(), "application/json");
         } catch (const std::exception& e) {
             res.status = 500;
             res.set_content(json{{"error", e.what()}}.dump(), "application/json");
