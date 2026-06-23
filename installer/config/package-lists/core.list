@@ -17,6 +17,7 @@ xorriso
 isolinux
 sqlite3
 libsqlite3-0
+jq
 openssl
 libssl3
 iproute2

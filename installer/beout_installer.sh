@@ -406,13 +406,27 @@ install_bootloader() {
 
     if $IS_EFI; then
         chroot "${TARGET_MNT}" /bin/bash -c "
-            apt-get install -y -qq grub-efi-amd64
+            export DEBIAN_FRONTEND=noninteractive
+            dpkg -i /opt/beout_os/installer/packages/grub-common_*.deb \
+                    /opt/beout_os/installer/packages/grub2-common_*.deb \
+                    /opt/beout_os/installer/packages/ucf_*.deb \
+                    /opt/beout_os/installer/packages/libfile-copy-recursive-perl_*.deb \
+                    /opt/beout_os/installer/packages/grub-efi-amd64-bin_*.deb \
+                    /opt/beout_os/installer/packages/grub-efi-amd64_*.deb || true
+            apt-get -f install -y -qq
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=beoutos --recheck
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB EFI installation failed."
     else
         chroot "${TARGET_MNT}" /bin/bash -c "
-            apt-get install -y -qq grub-pc
+            export DEBIAN_FRONTEND=noninteractive
+            dpkg -i /opt/beout_os/installer/packages/grub-common_*.deb \
+                    /opt/beout_os/installer/packages/grub2-common_*.deb \
+                    /opt/beout_os/installer/packages/ucf_*.deb \
+                    /opt/beout_os/installer/packages/libfile-copy-recursive-perl_*.deb \
+                    /opt/beout_os/installer/packages/grub-pc-bin_*.deb \
+                    /opt/beout_os/installer/packages/grub-pc_*.deb || true
+            apt-get -f install -y -qq
             grub-install --target=i386-pc ${TARGET_DISK}
             update-grub
         " >> "$LOG_FILE" 2>&1 || die "GRUB BIOS installation failed."
@@ -440,6 +454,9 @@ cleanup() {
     if $IS_EFI; then
         umount "${TARGET_MNT}/boot/efi" 2>/dev/null || true
     fi
+
+    # Clean up installer files from target disk to save space
+    rm -rf "${TARGET_MNT}/opt/beout_os/installer"
 
     umount "${TARGET_MNT}" 2>/dev/null || true
 
