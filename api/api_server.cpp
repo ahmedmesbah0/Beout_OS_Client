@@ -16,6 +16,7 @@
 #include <set>
 #include <map>
 #include <cstdlib>
+#include <memory>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include "../activation/activation_manager.hpp"
@@ -103,6 +104,52 @@ std::string shell_quote(const std::string& value) {
     }
     quoted += "'";
     return quoted;
+}
+
+struct ParsedUrl {
+    std::string scheme;
+    std::string host;
+    int port;
+    std::string base_path;
+};
+
+bool parse_server_url(const std::string& url, ParsedUrl& parsed, std::string& error) {
+    std::string value = url;
+    value.erase(0, value.find_first_not_of(" \t\r\n"));
+    value.erase(value.find_last_not_of(" \t\r\n") + 1);
+    while (!value.empty() && value.back() == '/') value.pop_back();
+
+    parsed.scheme = "http";
+    parsed.port = 80;
+    if (value.rfind("https://", 0) == 0) {
+        parsed.scheme = "https";
+        parsed.port = 443;
+        value = value.substr(8);
+    } else if (value.rfind("http://", 0) == 0) {
+        value = value.substr(7);
+    }
+
+    size_t path_pos = value.find('/');
+    std::string authority = path_pos == std::string::npos ? value : value.substr(0, path_pos);
+    parsed.base_path = path_pos == std::string::npos ? "" : value.substr(path_pos);
+    while (!parsed.base_path.empty() && parsed.base_path.back() == '/') parsed.base_path.pop_back();
+
+    size_t colon_pos = authority.rfind(':');
+    parsed.host = authority;
+    if (colon_pos != std::string::npos) {
+        parsed.host = authority.substr(0, colon_pos);
+        try {
+            parsed.port = std::stoi(authority.substr(colon_pos + 1));
+        } catch (...) {
+            error = "Invalid port in server URL";
+            return false;
+        }
+    }
+    if (parsed.host.empty()) {
+        error = "Missing host in server URL";
+        return false;
+    }
+    return true;
 }
 
 // Helper: execute a shell command and capture stdout.
@@ -278,45 +325,33 @@ void ApiServer::setup_routes() {
 
         // Only probe the server if a URL is configured
         if (!server_url.empty()) {
-            std::string host = server_url;
-            int port = 443;
-            bool is_https = false;
-            if (host.rfind("https://", 0) == 0) {
-                host = host.substr(8);
-                port = 443;
-                is_https = true;
-            } else if (host.rfind("http://", 0) == 0) {
-                host = host.substr(7);
-                port = 80;
-            }
-            size_t colon_pos = host.find(':');
-            if (colon_pos != std::string::npos) {
-                try {
-                    port = std::stoi(host.substr(colon_pos + 1));
-                } catch (...) {}
-                host = host.substr(0, colon_pos);
-            }
+            ParsedUrl parsed;
+            std::string parse_error;
             try {
-                httplib::Client cli(host, port);
+                if (!parse_server_url(server_url, parsed, parse_error)) {
+                    write_debug_log("HEALTH", "invalid server_url=" + server_url + " error=" + parse_error);
+                } else {
+                    httplib::Client cli(parsed.scheme + "://" + parsed.host + ":" + std::to_string(parsed.port));
 
-                // Respect user's SSL verification setting
-                std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
-                if (is_https && verify_ssl == "1") {
-                    cli.enable_server_certificate_verification(true);
-                    // Use custom CA bundle if provided
-                    std::ifstream ca_file("/opt/beout_os/etc/server_ca.pem");
-                    if (ca_file.good()) {
-                        cli.set_ca_cert_path("/opt/beout_os/etc/server_ca.pem");
+                    // Respect user's SSL verification setting
+                    std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
+                    if (parsed.scheme == "https" && verify_ssl == "1") {
+                        cli.enable_server_certificate_verification(true);
+                        // Use custom CA bundle if provided
+                        std::ifstream ca_file("/opt/beout_os/etc/server_ca.pem");
+                        if (ca_file.good()) {
+                            cli.set_ca_cert_path("/opt/beout_os/etc/server_ca.pem");
+                        }
+                    } else if (parsed.scheme == "https") {
+                        cli.enable_server_certificate_verification(false);
                     }
-                } else if (is_https) {
-                    cli.enable_server_certificate_verification(false);
-                }
 
-                cli.set_connection_timeout(1, 0);
-                cli.set_read_timeout(1, 0);
-                // Only probe /api/health — the standard health endpoint
-                if (auto r = cli.Get("/api/health")) {
-                    server_online = true;
+                    cli.set_connection_timeout(1, 0);
+                    cli.set_read_timeout(1, 0);
+                    // Only probe /api/health — the standard health endpoint
+                    if (auto r = cli.Get((parsed.base_path + "/api/health").c_str())) {
+                        server_online = (r->status >= 200 && r->status < 500);
+                    }
                 }
             } catch (...) {}
         }
@@ -666,41 +701,36 @@ void ApiServer::setup_routes() {
             }
             std::string machine_id = beout_os::activation::MachineId::get();
 
-            // Prepare client HTTP request to Main Server
-            // Parse host and port from URL
-            std::string host = server_url;
-            int port = 80;
-            if (host.rfind("https://", 0) == 0) {
-                host = host.substr(8);
-                port = 443;
-            } else if (host.rfind("http://", 0) == 0) {
-                host = host.substr(7);
-                port = 80;
-            }
-            
-            size_t colon_pos = host.find(':');
-            if (colon_pos != std::string::npos) {
-                port = std::stoi(host.substr(colon_pos + 1));
-                host = host.substr(0, colon_pos);
+            ParsedUrl parsed;
+            std::string parse_error;
+            if (!parse_server_url(server_url, parsed, parse_error)) {
+                write_debug_log("LICENSE", "invalid license server URL=" + server_url + " error=" + parse_error);
+                res.status = 400;
+                res.set_content(json{{"error", parse_error}}.dump(), "application/json");
+                return;
             }
 
-            httplib::Client cli(host, port);
+            httplib::Client cli(parsed.scheme + "://" + parsed.host + ":" + std::to_string(parsed.port));
+            cli.set_connection_timeout(8, 0);
+            cli.set_read_timeout(15, 0);
             
             // Connection Security: Enforce SSL/TLS certificate verification by default
             std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
-            if (verify_ssl == "1") {
+            if (parsed.scheme == "https" && verify_ssl == "1") {
                 cli.enable_server_certificate_verification(true);
                 // If the administrator placed a private CA bundle, verify against it
                 std::ifstream ca_file("/opt/beout_os/etc/server_ca.pem");
                 if (ca_file.good()) {
                     cli.set_ca_cert_path("/opt/beout_os/etc/server_ca.pem");
                 }
-            } else {
+            } else if (parsed.scheme == "https") {
                 cli.enable_server_certificate_verification(false);
             }
 
             json req_payload = {{"machine_id", machine_id}, {"license_key", license_key}};
-            auto s_res = cli.Post("/api/license/activate", req_payload.dump(), "application/json");
+            std::string activate_path = parsed.base_path + "/api/license/activate";
+            write_debug_log("LICENSE", "activation request host=" + parsed.host + " port=" + std::to_string(parsed.port) + " scheme=" + parsed.scheme + " path=" + activate_path + " verify_ssl=" + verify_ssl);
+            auto s_res = cli.Post(activate_path.c_str(), req_payload.dump(), "application/json");
 
             if (s_res && s_res->status == 200) {
                 auto s_body = json::parse(s_res->body);
@@ -733,6 +763,7 @@ void ApiServer::setup_routes() {
             } else {
                 res.status = s_res ? s_res->status : 502;
                 std::string err_msg = s_res ? s_res->body : "{\"error\":\"Failed to connect to license server\"}";
+                write_debug_log("LICENSE", "activation failed status=" + std::to_string(res.status) + " body=" + err_msg);
                 res.set_content(err_msg, "application/json");
             }
         } catch (const std::exception& e) {

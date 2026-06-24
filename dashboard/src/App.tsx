@@ -17,6 +17,7 @@ export default function App() {
         if (!token) return null;
         const headers = new Headers(options.headers || {});
         headers.set('Authorization', `Bearer ${token}`);
+        const path = url.startsWith(API_BASE) ? url.substring(API_BASE.length) || '/' : url;
 
         try {
             const res = await fetch(url, { ...options, headers });
@@ -28,7 +29,7 @@ export default function App() {
             return res;
         } catch (err) {
             console.error("API Fetch Error:", err);
-            throw err;
+            throw new Error(`Cannot reach local appliance API at ${path}. Check beout_os-api service, HTTPS proxy, or browser certificate trust.`);
         }
     };
 
@@ -1194,7 +1195,7 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
                 setMessage({ text: 'Verification failed. Could not communicate with licensing server.', isError: true });
             }
         } catch (err) {
-            setMessage({ text: 'Appliance communication failure to licensing gateway.', isError: true });
+            setMessage({ text: `Appliance communication failure to licensing gateway: ${err instanceof Error ? err.message : 'unknown error'}`, isError: true });
         } finally {
             setLoading(false);
         }
