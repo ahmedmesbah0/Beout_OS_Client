@@ -71,7 +71,7 @@ export default function App() {
     return (
         <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100 antialiased">
             {/* Sidebar navigation */}
-            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} health={health} applianceVersion={applianceVersion} />
+            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} applianceVersion={applianceVersion} />
 
             {/* Content wrapper */}
             <div className="flex flex-col flex-1 h-screen overflow-hidden bg-[#070b13]">
@@ -215,7 +215,7 @@ function Login({ setToken }: { setToken: (t: string) => void }) {
 }
 
 // --- SIDEBAR ---
-function Sidebar({ activeTab, setActiveTab, health, applianceVersion }: { activeTab: string, setActiveTab: (tab: string) => void, health: any, applianceVersion: string }) {
+function Sidebar({ activeTab, setActiveTab, applianceVersion }: { activeTab: string, setActiveTab: (tab: string) => void, applianceVersion: string }) {
     const [expandedGroups, setExpandedGroups] = useState({
         dashboard: true,
         network: true,
@@ -1493,7 +1493,7 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
 
     const renderOutput = (title: string, output: string, cmd: string) => (
         <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 whitespace-pre-wrap max-h-64 overflow-y-auto">
-            <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider">{cmd}</div>
+            <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider">{title} - {cmd}</div>
             {output || <span className="text-slate-600 italic">No output</span>}
         </div>
     );
