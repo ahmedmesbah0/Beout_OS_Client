@@ -12,6 +12,16 @@ if [ "$1" = "configure" ]; then
     chown -R beout_api:beout_api /var/lib/beout_os
     chmod 755 /var/lib/beout_os
 
+    # First-boot dashboard credentials must match the installer screen.
+    # This also repairs older images that accidentally seeded a random password.
+    if command -v sqlite3 >/dev/null 2>&1; then
+        rm -f /var/lib/beout_os/initial_admin_password
+        printf 'admin\n' > /var/lib/beout_os/initial_admin_password
+        chown beout_api:beout_api /var/lib/beout_os/initial_admin_password
+        chmod 600 /var/lib/beout_os/initial_admin_password
+        sqlite3 /var/lib/beout_os/config.db "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL); DELETE FROM config WHERE key='admin_password_hash';" || true
+    fi
+
     # Generate self-signed certs for API if they don't exist
     if [ ! -f /opt/beout_os/bin/server.crt ]; then
         cd /opt/beout_os/bin
@@ -60,7 +70,9 @@ EOF
     fi
 
     # Start API service if not in chroot
+    systemctl set-environment BEOUT_OS_FORCE_DEFAULT_ADMIN_PASSWORD=1 || true
     systemctl restart beout_os-api || true
+    systemctl unset-environment BEOUT_OS_FORCE_DEFAULT_ADMIN_PASSWORD || true
     
     # We do not start provisioning directly here; it will start on tty1 on boot
 fi

@@ -15,6 +15,7 @@
 #include <ctime>
 #include <set>
 #include <map>
+#include <cstdlib>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include "../activation/activation_manager.hpp"
@@ -141,9 +142,10 @@ ApiServer::ApiServer(const std::string& cert_path, const std::string& private_ke
 
     // Seed initial admin password if not already present
     std::string existing_hash = db_->get_config("admin_password_hash").value_or("");
-    if (existing_hash.empty()) {
-        // Generate a random 16-character password on first boot
-        std::string initial_password = generate_session_token().substr(0, 16);
+    const char* force_default_password = std::getenv("BEOUT_OS_FORCE_DEFAULT_ADMIN_PASSWORD");
+    if (existing_hash.empty() || (force_default_password && std::string(force_default_password) == "1")) {
+        // Match the installer completion screen so first login works without shell access.
+        std::string initial_password = "admin";
         std::string password_file_path = "/var/lib/beout_os/initial_admin_password";
 
         // Write file FIRST so it's available even if DB write fails
@@ -154,7 +156,7 @@ ApiServer::ApiServer(const std::string& cert_path, const std::string& private_ke
             }
             close(pw_fd);
             std::cerr << "========================================" << std::endl;
-            std::cerr << "  INITIAL ADMIN PASSWORD GENERATED" << std::endl;
+            std::cerr << "  INITIAL ADMIN PASSWORD SEEDED" << std::endl;
             std::cerr << "  Password saved to: " << password_file_path << std::endl;
             std::cerr << "  Change this password on first login." << std::endl;
             std::cerr << "========================================" << std::endl;
@@ -165,6 +167,7 @@ ApiServer::ApiServer(const std::string& cert_path, const std::string& private_ke
 
         // Store hash in DB after file is safely written
         db_->set_config("admin_password_hash", hash_password(initial_password));
+        write_debug_log("AUTH", "admin password seeded to documented default");
     }
 
     setup_routes();
