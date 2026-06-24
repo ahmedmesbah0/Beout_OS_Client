@@ -12,6 +12,9 @@
 #include <unistd.h>
 #include <cerrno>
 #include <regex>
+#include <ctime>
+#include <set>
+#include <map>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include "../activation/activation_manager.hpp"
@@ -20,6 +23,8 @@
 using json = nlohmann::json;
 
 namespace {
+
+const char* DEBUG_LOG_FILE = "/var/log/beout_os_api_debug.log";
 
 std::string sha256_hash(const std::string& input) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
@@ -80,11 +85,35 @@ std::string generate_session_token() {
     return ss.str();
 }
 
-// Helper: execute a shell command and capture stdout (with timeout)
+void write_debug_log(const std::string& level, const std::string& message) {
+    std::ofstream log(DEBUG_LOG_FILE, std::ios::app);
+    if (!log.is_open()) return;
+    std::time_t now = std::time(nullptr);
+    char ts[32] = {0};
+    std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    log << "[" << ts << "] " << level << ": " << message << std::endl;
+}
+
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') quoted += "'\\''";
+        else quoted += c;
+    }
+    quoted += "'";
+    return quoted;
+}
+
+// Helper: execute a shell command and capture stdout.
 std::string exec_command(const std::string& cmd, int timeout_sec = 15) {
+    (void)timeout_sec;
+    write_debug_log("CMD", cmd);
     std::string result;
     FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
-    if (!pipe) return "ERROR: popen() failed";
+    if (!pipe) {
+        write_debug_log("ERROR", "popen failed for command: " + cmd);
+        return "ERROR: popen() failed";
+    }
 
     char buf[1024];
     while (fgets(buf, sizeof(buf), pipe) != nullptr) {
@@ -96,7 +125,7 @@ std::string exec_command(const std::string& cmd, int timeout_sec = 15) {
     }
     int status = pclose(pipe);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-        // Append exit code info (command already returned its own output)
+        write_debug_log("WARN", "command exited with code " + std::to_string(WEXITSTATUS(status)) + ": " + cmd);
     }
     return result;
 }
@@ -120,8 +149,9 @@ ApiServer::ApiServer(const std::string& cert_path, const std::string& private_ke
         // Write file FIRST so it's available even if DB write fails
         int pw_fd = open(password_file_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
         if (pw_fd >= 0) {
-            write(pw_fd, initial_password.c_str(), initial_password.size());
-            write(pw_fd, "\n", 1);
+            if (write(pw_fd, initial_password.c_str(), initial_password.size()) < 0 || write(pw_fd, "\n", 1) < 0) {
+                write_debug_log("ERROR", "failed to write initial admin password file: " + password_file_path);
+            }
             close(pw_fd);
             std::cerr << "========================================" << std::endl;
             std::cerr << "  INITIAL ADMIN PASSWORD GENERATED" << std::endl;
@@ -167,6 +197,10 @@ void ApiServer::setup_routes() {
         {"Access-Control-Allow-Headers", "Content-Type, Authorization"}
     });
 
+    server_->set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        write_debug_log("REQ", req.remote_addr + " " + req.method + " " + req.path + " -> " + std::to_string(res.status));
+    });
+
     // Serve static files from the React app
     server_->set_mount_point("/", "../dashboard/dist");
     
@@ -178,6 +212,7 @@ void ApiServer::setup_routes() {
     // Helper to check authentication
     auto check_auth = [&](const httplib::Request& req, httplib::Response& res) -> bool {
         if (!req.has_header("Authorization")) {
+            write_debug_log("AUTH", "missing authorization for " + req.method + " " + req.path);
             res.status = 401;
             res.set_content(json{{"error", "Unauthorized"}}.dump(), "application/json");
             return false;
@@ -185,6 +220,7 @@ void ApiServer::setup_routes() {
         std::string auth_header = req.get_header_value("Authorization");
         std::lock_guard<std::mutex> lock(session_mutex_);
         if (auth_header != "Bearer " + current_session_token_ || current_session_token_.empty()) {
+            write_debug_log("AUTH", "invalid session for " + req.method + " " + req.path);
             res.status = 401;
             res.set_content(json{{"error", "Invalid Session"}}.dump(), "application/json");
             return false;
@@ -298,6 +334,7 @@ void ApiServer::setup_routes() {
             {"internet_status", internet_online ? "online" : "offline"},
             {"server_status", server_online ? "online" : "offline"}
         };
+        write_debug_log("HEALTH", "version=" + version + " hostname=" + hostname + " wan_ip=" + wan_ip + " internet=" + (internet_online ? std::string("online") : std::string("offline")) + " server=" + (server_online ? std::string("online") : std::string("offline")));
         res.set_content(response.dump(), "application/json");
     });
 
@@ -318,8 +355,10 @@ void ApiServer::setup_routes() {
             if (username == "admin" && verify_password(password, stored_hash)) {
                 std::lock_guard<std::mutex> lock(session_mutex_);
                 current_session_token_ = generate_session_token();
+                write_debug_log("AUTH", "admin login successful from " + req.remote_addr);
                 res.set_content(json{{"token", current_session_token_}}.dump(), "application/json");
             } else {
+                write_debug_log("AUTH", "admin login failed from " + req.remote_addr + " username=" + username);
                 res.status = 401;
                 res.set_content(json{{"error", "Invalid credentials"}}.dump(), "application/json");
             }
@@ -406,8 +445,12 @@ void ApiServer::setup_routes() {
         }
 
         json response = {
-            {"interfaces", interfaces}
+            {"interfaces", interfaces},
+            {"system_interfaces", detect_system_interfaces()},
+            {"kernel_addresses", exec_command("ip -br addr show 2>/dev/null")},
+            {"routes", exec_command("ip route show 2>/dev/null")}
         };
+        write_debug_log("CONFIG", "returned network config interfaces=" + std::to_string(interfaces.size()));
         res.set_content(response.dump(), "application/json");
     });
 
@@ -445,6 +488,7 @@ void ApiServer::setup_routes() {
             if (body.contains("interfaces") && body["interfaces"].is_array()) {
                 // --- Validate all interfaces before saving ---
                 std::set<std::string> seen_ips;
+                std::set<std::string> seen_devices;
                 for (auto& item : body["interfaces"]) {
                     std::string id = item.value("id", "");
                     std::string ip = item.value("ip", "");
@@ -484,13 +528,24 @@ void ApiServer::setup_routes() {
                     // Validate device name exists on system
                     std::string device = item.value("device", "");
                     if (!device.empty() && !validate_device_name(device)) {
+                        write_debug_log("CONFIG", "rejected unknown device=" + device + " id=" + id);
                         res.status = 400;
                         res.set_content(json{{"error", "Network interface '" + device + "' does not exist on this system"}}.dump(), "application/json");
                         return;
                     }
+                    if (!device.empty()) {
+                        if (seen_devices.count(device)) {
+                            write_debug_log("CONFIG", "rejected duplicate device=" + device + " id=" + id);
+                            res.status = 400;
+                            res.set_content(json{{"error", "Duplicate adapter device across interfaces: " + device}}.dump(), "application/json");
+                            return;
+                        }
+                        seen_devices.insert(device);
+                    }
                 }
 
                 db_->set_config("network_interfaces_json", body["interfaces"].dump());
+                write_debug_log("CONFIG", "saved network interface JSON: " + body["interfaces"].dump());
 
                 // Sync back to legacy configurations for compatibility with CLI client
                 for (auto& item : body["interfaces"]) {
@@ -520,11 +575,15 @@ void ApiServer::setup_routes() {
 
                 // Trigger sync network configuration in OS background
                 if (std::system("sudo /opt/beout_os/bin/sync_network.sh &") != 0) {
+                    write_debug_log("ERROR", "failed to launch sync_network.sh");
                     std::cerr << "Warning: Failed to launch sync_network.sh background process." << std::endl;
+                } else {
+                    write_debug_log("CONFIG", "launched sync_network.sh");
                 }
             }
             res.set_content(json{{"status", "success"}}.dump(), "application/json");
         } catch (const json::parse_error&) {
+            write_debug_log("ERROR", "invalid JSON received by /api/config");
             res.status = 400;
             res.set_content(json{{"error", "Invalid JSON"}}.dump(), "application/json");
         }
@@ -544,7 +603,7 @@ void ApiServer::setup_routes() {
      });
 
     // License Status API (public - unregistered devices need to read their status)
-    server_->Get("/api/license", [&](const httplib::Request& req, httplib::Response& res) {
+    server_->Get("/api/license", [&](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
 
         std::string status = db_->get_config("activation_status").value_or("INACTIVE");
@@ -788,7 +847,7 @@ void ApiServer::setup_routes() {
                 return;
             }
             if (count < 1 || count > 20) count = 4;
-            std::string cmd = "ping -c " + std::to_string(count) + " -W 2 " + host;
+            std::string cmd = "ping -c " + std::to_string(count) + " -W 2 -- " + shell_quote(host);
             std::string output = exec_command(cmd, 30);
             res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
         } catch (const std::exception& e) {
@@ -809,7 +868,7 @@ void ApiServer::setup_routes() {
                 res.set_content(json{{"error", "Invalid host"}}.dump(), "application/json");
                 return;
             }
-            std::string cmd = "traceroute -m 15 -w 2 " + host;
+            std::string cmd = "traceroute -m 15 -w 2 -- " + shell_quote(host);
             std::string output = exec_command(cmd, 30);
             res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
         } catch (const std::exception& e) {
@@ -830,7 +889,7 @@ void ApiServer::setup_routes() {
                 res.set_content(json{{"error", "Invalid host"}}.dump(), "application/json");
                 return;
             }
-            std::string cmd = "dig +short " + host;
+            std::string cmd = "dig +short -- " + shell_quote(host);
             std::string output = exec_command(cmd, 10);
             res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
         } catch (const std::exception& e) {
@@ -900,6 +959,68 @@ void ApiServer::setup_routes() {
         if (!check_auth(req, res)) return;
         std::string output = exec_command("ps aux --sort=-%mem | head -50");
         res.set_content(json{{"command", "ps aux"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Full appliance debug logs and state bundle.
+    server_->Get("/api/debug/full", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        json result = {
+            {"api_log", exec_command("tail -n 1000 /var/log/beout_os_api_debug.log 2>/dev/null || true")},
+            {"install_log", exec_command("tail -n 1000 /var/log/beout_install.log 2>/dev/null || tail -n 1000 /tmp/beout_install.log 2>/dev/null || true")},
+            {"network_sync_log", exec_command("tail -n 1000 /var/log/beout_os_network_sync.log 2>/dev/null || true")},
+            {"journal_api", exec_command("journalctl -u beout_os-api -n 300 --no-pager 2>/dev/null || true")},
+            {"journal_networking", exec_command("journalctl -u networking -n 300 --no-pager 2>/dev/null || true")},
+            {"interfaces_file", exec_command("cat /etc/network/interfaces /etc/network/interfaces.d/beout_os_interfaces 2>/dev/null || true")},
+            {"kernel_addresses", exec_command("ip -d -br addr show 2>/dev/null")},
+            {"kernel_links", exec_command("ip -d link show 2>/dev/null")},
+            {"routes", exec_command("ip route show table all 2>/dev/null")},
+            {"dns", exec_command("cat /etc/resolv.conf 2>/dev/null || true")},
+            {"services", exec_command("systemctl --failed --no-pager 2>/dev/null || true")}
+        };
+        write_debug_log("DEBUG", "full debug bundle requested from " + req.remote_addr);
+        res.set_content(result.dump(), "application/json");
+    });
+
+    // Constrained test-command runner for dashboard diagnostics only.
+    server_->Post("/api/debug/test-command", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        try {
+            auto body = json::parse(req.body);
+            std::string name = body.value("command", "");
+            std::string arg = body.value("arg", "");
+            std::map<std::string, std::string> allowed = {
+                {"ip-brief", "ip -br addr show"},
+                {"ip-routes", "ip route show table all"},
+                {"interfaces-file", "cat /etc/network/interfaces /etc/network/interfaces.d/beout_os_interfaces 2>/dev/null"},
+                {"networking-status", "systemctl status networking --no-pager"},
+                {"api-status", "systemctl status beout_os-api --no-pager"},
+                {"api-logs", "journalctl -u beout_os-api -n 200 --no-pager"},
+                {"network-logs", "tail -n 300 /var/log/beout_os_network_sync.log 2>/dev/null || true"},
+                {"install-logs", "tail -n 300 /var/log/beout_install.log 2>/dev/null || tail -n 300 /tmp/beout_install.log 2>/dev/null || true"},
+                {"ping", "ping -c 4 -W 2 -- " + shell_quote(arg.empty() ? "1.1.1.1" : arg)},
+                {"dns", "dig +short -- " + shell_quote(arg.empty() ? "example.com" : arg)}
+            };
+            if (!allowed.count(name)) {
+                write_debug_log("WARN", "rejected test command name=" + name + " from " + req.remote_addr);
+                res.status = 400;
+                res.set_content(json{{"error", "Command is not in the dashboard test allowlist"}}.dump(), "application/json");
+                return;
+            }
+            if ((name == "ping" || name == "dns") && !validate_host(arg.empty() ? (name == "ping" ? "1.1.1.1" : "example.com") : arg)) {
+                res.status = 400;
+                res.set_content(json{{"error", "Invalid test argument"}}.dump(), "application/json");
+                return;
+            }
+            std::string cmd = allowed[name];
+            std::string output = exec_command(cmd, 30);
+            write_debug_log("TEST", "dashboard test command=" + name + " arg=" + arg + " from " + req.remote_addr);
+            res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
     });
 
     // Real system resources (replaces simulated dashboard data)

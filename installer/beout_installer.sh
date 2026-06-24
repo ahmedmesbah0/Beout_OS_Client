@@ -6,7 +6,7 @@
 #  Custom text-based installer (Proxmox-style)
 #  Completely replaces the Debian installer
 # =============================================================
-set -euo pipefail
+set -Eeuo pipefail
 
 # === PATHS ===
 INSTALLER_DIR="/opt/beout_os/installer"
@@ -37,6 +37,27 @@ CURRENT_STEP=0
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
+log_cmd() {
+    log "CMD: $*"
+    "$@" >> "$LOG_FILE" 2>&1
+}
+
+log_system_snapshot() {
+    log "SNAPSHOT: $1"
+    {
+        echo "--- block devices ---"
+        lsblk -f
+        echo "--- network links ---"
+        ip -br link show 2>/dev/null || true
+        echo "--- network addresses ---"
+        ip -br addr show 2>/dev/null || true
+        echo "--- routes ---"
+        ip route show table all 2>/dev/null || true
+        echo "--- mounts ---"
+        mount | grep -E "${TARGET_MNT}|/boot/efi" || true
+    } >> "$LOG_FILE" 2>&1
 }
 
 die() {
@@ -520,9 +541,11 @@ show_complete() {
 main() {
     log "=== Beout_OS Installer Started ==="
     log "Date: $(date)"
+    log_system_snapshot "startup"
 
     # Trap errors
     trap cleanup EXIT
+    trap 'log "ERROR line=${LINENO} command=${BASH_COMMAND}"; log_system_snapshot "error"' ERR
 
     # Ensure kernel modules are mapped and the ext4 driver is loaded
     depmod -a 2>/dev/null || true
@@ -540,8 +563,11 @@ main() {
     echo ""
 
     partition_disk
+    log_system_snapshot "after partition_disk"
     format_partitions
+    log_system_snapshot "after format_partitions"
     mount_target
+    log_system_snapshot "after mount_target"
     install_base_system
     configure_system
     install_beout_os
@@ -549,6 +575,9 @@ main() {
     install_bootloader
 
     # Cleanup
+    mkdir -p "${TARGET_MNT}/var/log"
+    cp "$LOG_FILE" "${TARGET_MNT}/var/log/beout_install.log" 2>/dev/null || true
+    log "Installer log copied to target /var/log/beout_install.log"
     cleanup
     trap - EXIT
 

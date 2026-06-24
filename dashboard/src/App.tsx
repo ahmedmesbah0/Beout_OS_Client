@@ -1445,10 +1445,14 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
     const [logsOutput, setLogsOutput] = useState('');
     const [fwOutput, setFwOutput] = useState('');
     const [procsOutput, setProcsOutput] = useState('');
+    const [fullDebugOutput, setFullDebugOutput] = useState('');
+    const [testCommandOutput, setTestCommandOutput] = useState('');
     const [running, setRunning] = useState('');
     const [pingHost, setPingHost] = useState('8.8.8.8');
     const [traceHost, setTraceHost] = useState('8.8.8.8');
     const [dnsHost, setDnsHost] = useState('google.com');
+    const [testCommand, setTestCommand] = useState('ip-brief');
+    const [testCommandArg, setTestCommandArg] = useState('');
 
     useEffect(() => {
         const loadResources = async () => {
@@ -1481,7 +1485,13 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
             });
             if (res && res.ok) {
                 const data = await res.json();
-                setter(data.output || JSON.stringify(data, null, 2));
+                if (data.output) {
+                    setter(data.output);
+                } else if (endpoint === 'full') {
+                    setter(Object.entries(data).map(([key, value]) => `===== ${key.toUpperCase()} =====\n${Array.isArray(value) ? value.join('\n') : String(value || '')}`).join('\n\n'));
+                } else {
+                    setter(JSON.stringify(data, null, 2));
+                }
             } else {
                 setter('Request failed or unauthorized.');
             }
@@ -1493,6 +1503,13 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
 
     const renderOutput = (title: string, output: string, cmd: string) => (
         <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 whitespace-pre-wrap max-h-64 overflow-y-auto">
+            <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider">{title} - {cmd}</div>
+            {output || <span className="text-slate-600 italic">No output</span>}
+        </div>
+    );
+
+    const renderLargeOutput = (title: string, output: string, cmd: string) => (
+        <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 whitespace-pre-wrap max-h-[520px] overflow-y-auto">
             <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider">{title} - {cmd}</div>
             {output || <span className="text-slate-600 italic">No output</span>}
         </div>
@@ -1634,6 +1651,30 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
                     <button onClick={() => runDiag('firewall', null, setFwOutput, 'nft/iptables')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Firewall</button>
                     <button onClick={() => runDiag('processes', null, setProcsOutput, 'ps aux')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Processes</button>
                     <button onClick={() => runDiag('logs', null, setLogsOutput, 'journalctl -n 50')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">System Logs</button>
+                    <button onClick={() => runDiag('full', null, setFullDebugOutput, 'full debug bundle')} className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-xs font-semibold text-white transition">Full Debug Bundle</button>
+                </div>
+
+                <div className="bg-slate-950/50 border border-slate-800 rounded-lg p-4 mb-4 space-y-3">
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-200">Test Commands Only</h3>
+                        <p className="text-xs text-slate-500">Runs a restricted allowlist for VM dashboard diagnostics. It does not execute arbitrary shell input.</p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <select value={testCommand} onChange={e => setTestCommand(e.target.value)} className="rounded bg-slate-950/80 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500">
+                            <option value="ip-brief">IP Brief</option>
+                            <option value="ip-routes">Routes</option>
+                            <option value="interfaces-file">Interfaces File</option>
+                            <option value="networking-status">Networking Status</option>
+                            <option value="api-status">API Service Status</option>
+                            <option value="api-logs">API Logs</option>
+                            <option value="network-logs">Network Sync Logs</option>
+                            <option value="install-logs">Install Logs</option>
+                            <option value="ping">Ping Host</option>
+                            <option value="dns">DNS Lookup</option>
+                        </select>
+                        <input value={testCommandArg} onChange={e => setTestCommandArg(e.target.value)} placeholder="Optional host for ping/dns" className="rounded bg-slate-950/80 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500" />
+                        <button onClick={() => runDiag('test-command', { command: testCommand, arg: testCommandArg }, setTestCommandOutput, testCommand)} disabled={running === testCommand} className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition disabled:opacity-50">Run Test Command</button>
+                    </div>
                 </div>
 
                 {routesOutput && renderOutput('Routing Table', routesOutput, 'ip route show')}
@@ -1643,6 +1684,8 @@ function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
                 {fwOutput && renderOutput('Firewall Rules', fwOutput, 'nft list ruleset / iptables -L')}
                 {procsOutput && renderOutput('Top Processes', procsOutput, 'ps aux --sort=-%mem')}
                 {logsOutput && renderOutput('System Logs', logsOutput, 'journalctl -n 50')}
+                {testCommandOutput && renderLargeOutput('Test Command Output', testCommandOutput, testCommand)}
+                {fullDebugOutput && renderLargeOutput('Full Debug Bundle', fullDebugOutput, 'api/network/install/logs')}
             </div>
         </div>
     );
