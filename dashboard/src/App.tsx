@@ -84,6 +84,7 @@ export default function App() {
                         {activeTab === 'network-interfaces' && <Interfaces fetchWithAuth={fetchWithAuth} />}
                         {activeTab === 'system-licensing' && <License fetchWithAuth={fetchWithAuth} />}
                         {activeTab === 'system-time' && <TimeSettings fetchWithAuth={fetchWithAuth} />}
+                        {activeTab === 'system-debug' && <DebugPanel fetchWithAuth={fetchWithAuth} />}
                     </div>
                 </main>
             </div>
@@ -317,6 +318,19 @@ function Sidebar({ activeTab, setActiveTab, health, applianceVersion }: { active
                         </div>
                     )}
                 </div>
+
+                {/* Tools Group */}
+                <div className="space-y-1">
+                    <button
+                        className="w-full flex items-center justify-between py-2 px-3 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 transition duration-150"
+                        onClick={() => setActiveTab('system-debug')}
+                    >
+                        <span className="flex items-center gap-3 text-sm font-semibold">
+                            <Icon name="biotech" className="text-lg text-amber-400" />
+                            Debug Tools
+                        </span>
+                    </button>
+                </div>
             </div>
 
             {/* Footer Details */}
@@ -343,6 +357,7 @@ function Header({ activeTab, setToken, health }: any) {
         if (activeTab === 'network-interfaces') return 'Network Interfaces';
         if (activeTab === 'system-licensing') return 'Appliance Licensing';
         if (activeTab === 'system-time') return 'Time & Timezone Settings';
+        if (activeTab === 'system-debug') return 'Debug & Diagnostics';
         return '';
     };
 
@@ -1413,6 +1428,222 @@ function TimeSettings({ fetchWithAuth }: { fetchWithAuth: any }) {
                     </button>
                 </div>
             </form>
+        </div>
+    );
+}
+
+// --- DEBUG & DIAGNOSTICS PANEL ---
+function DebugPanel({ fetchWithAuth }: { fetchWithAuth: any }) {
+    const [resources, setResources] = useState<any>(null);
+    const [pingOutput, setPingOutput] = useState('');
+    const [traceOutput, setTraceOutput] = useState('');
+    const [dnsOutput, setDnsOutput] = useState('');
+    const [routesOutput, setRoutesOutput] = useState('');
+    const [arpOutput, setArpOutput] = useState('');
+    const [connOutput, setConnOutput] = useState('');
+    const [servicesOutput, setServicesOutput] = useState('');
+    const [logsOutput, setLogsOutput] = useState('');
+    const [fwOutput, setFwOutput] = useState('');
+    const [procsOutput, setProcsOutput] = useState('');
+    const [running, setRunning] = useState('');
+    const [pingHost, setPingHost] = useState('8.8.8.8');
+    const [traceHost, setTraceHost] = useState('8.8.8.8');
+    const [dnsHost, setDnsHost] = useState('google.com');
+
+    useEffect(() => {
+        const loadResources = async () => {
+            try {
+                const res = await fetchWithAuth(`${API_BASE}/debug/resources`);
+                if (res && res.ok) {
+                    const data = await res.json();
+                    setResources(data);
+                }
+            } catch (err) {}
+        };
+        loadResources();
+        const interval = setInterval(loadResources, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const runDiag = async (
+        endpoint: string,
+        body: any,
+        setter: (v: string) => void,
+        cmdName: string
+    ) => {
+        setRunning(cmdName);
+        setter('');
+        try {
+            const res = await fetchWithAuth(`${API_BASE}/debug/${endpoint}`, {
+                method: body ? 'POST' : 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : undefined
+            });
+            if (res && res.ok) {
+                const data = await res.json();
+                setter(data.output || JSON.stringify(data, null, 2));
+            } else {
+                setter('Request failed or unauthorized.');
+            }
+        } catch (err: any) {
+            setter(`Error: ${err.message}`);
+        }
+        setRunning('');
+    };
+
+    const renderOutput = (title: string, output: string, cmd: string) => (
+        <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 whitespace-pre-wrap max-h-64 overflow-y-auto">
+            <div className="text-slate-500 mb-2 text-[10px] uppercase tracking-wider">{cmd}</div>
+            {output || <span className="text-slate-600 italic">No output</span>}
+        </div>
+    );
+
+    return (
+        <div className="space-y-6">
+            {/* System Resources */}
+            <div className="bg-slate-900/30 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+                <div className="flex items-center gap-2.5 pb-4 mb-4 border-b border-slate-800/80">
+                    <Icon name="memory" className="text-xl text-emerald-400" />
+                    <h2 className="font-headline text-base font-bold text-slate-200">Real System Resources</h2>
+                </div>
+                {resources ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                            <span className="text-slate-500 text-xs">Uptime</span>
+                            <p className="text-slate-200 font-mono font-semibold">{resources.uptime || 'N/A'}</p>
+                        </div>
+                        <div>
+                            <span className="text-slate-500 text-xs">Memory</span>
+                            <p className="text-slate-200 font-mono font-semibold">
+                                {resources.memory_used_mb}MB / {resources.memory_total_mb}MB ({resources.memory_percent}%)
+                            </p>
+                        </div>
+                        <div>
+                            <span className="text-slate-500 text-xs">CPU Load</span>
+                            <p className="text-slate-200 font-mono font-semibold">
+                                {resources.load_1min} / {resources.load_5min} / {resources.load_15min}
+                            </p>
+                        </div>
+                        <div>
+                            <span className="text-slate-500 text-xs">Interfaces</span>
+                            <p className="text-slate-200 font-mono text-xs whitespace-pre-line">{resources.interfaces?.trim() || 'N/A'}</p>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-slate-500 text-sm">Loading resource data...</p>
+                )}
+                {resources?.disk && (
+                    <div className="mt-4">
+                        <span className="text-slate-500 text-xs block mb-1">Disk Usage</span>
+                        <pre className="text-slate-300 font-mono text-xs whitespace-pre-wrap">{resources.disk.trim()}</pre>
+                    </div>
+                )}
+            </div>
+
+            {/* Network Diagnostic Tools */}
+            <div className="bg-slate-900/30 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+                <div className="flex items-center gap-2.5 pb-4 mb-4 border-b border-slate-800/80">
+                    <Icon name="lan" className="text-xl text-blue-400" />
+                    <h2 className="font-headline text-base font-bold text-slate-200">Network Diagnostics</h2>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    {/* Ping */}
+                    <div className="space-y-2">
+                        <label className="text-xs font-semibold text-slate-400">Ping Test</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                className="flex-1 rounded bg-slate-950/80 border border-slate-800 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                                value={pingHost}
+                                onChange={e => setPingHost(e.target.value)}
+                                placeholder="Host or IP"
+                            />
+                            <button
+                                onClick={() => runDiag('ping', { host: pingHost, count: 4 }, setPingOutput, 'ping')}
+                                disabled={running === 'ping'}
+                                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition disabled:opacity-50"
+                            >
+                                {running === 'ping' ? '...' : 'Run'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Traceroute */}
+                    <div className="space-y-2">
+                        <label className="text-xs font-semibold text-slate-400">Traceroute</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                className="flex-1 rounded bg-slate-950/80 border border-slate-800 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                                value={traceHost}
+                                onChange={e => setTraceHost(e.target.value)}
+                                placeholder="Host or IP"
+                            />
+                            <button
+                                onClick={() => runDiag('traceroute', { host: traceHost }, setTraceOutput, 'traceroute')}
+                                disabled={running === 'traceroute'}
+                                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition disabled:opacity-50"
+                            >
+                                {running === 'traceroute' ? '...' : 'Run'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* DNS Lookup */}
+                    <div className="space-y-2">
+                        <label className="text-xs font-semibold text-slate-400">DNS Lookup</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                className="flex-1 rounded bg-slate-950/80 border border-slate-800 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                                value={dnsHost}
+                                onChange={e => setDnsHost(e.target.value)}
+                                placeholder="Domain"
+                            />
+                            <button
+                                onClick={() => runDiag('dns', { host: dnsHost }, setDnsOutput, 'dig')}
+                                disabled={running === 'dig'}
+                                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition disabled:opacity-50"
+                            >
+                                {running === 'dig' ? '...' : 'Run'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {renderOutput('Ping Output', pingOutput, 'ping -c 4')}
+                    {renderOutput('Traceroute Output', traceOutput, 'traceroute -m 15')}
+                    {renderOutput('DNS Output', dnsOutput, 'dig +short')}
+                </div>
+            </div>
+
+            {/* System Tables */}
+            <div className="bg-slate-900/30 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+                <div className="flex items-center gap-2.5 pb-4 mb-4 border-b border-slate-800/80">
+                    <Icon name="list_alt" className="text-xl text-purple-400" />
+                    <h2 className="font-headline text-base font-bold text-slate-200">System Tables</h2>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                    <button onClick={() => runDiag('routes', null, setRoutesOutput, 'ip route show')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Routing Table</button>
+                    <button onClick={() => runDiag('arp', null, setArpOutput, 'ip neigh show')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">ARP Table</button>
+                    <button onClick={() => runDiag('connections', null, setConnOutput, 'ss -tunap')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Connections</button>
+                    <button onClick={() => runDiag('services', null, setServicesOutput, 'systemctl list-units')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Services</button>
+                    <button onClick={() => runDiag('firewall', null, setFwOutput, 'nft/iptables')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Firewall</button>
+                    <button onClick={() => runDiag('processes', null, setProcsOutput, 'ps aux')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">Processes</button>
+                    <button onClick={() => runDiag('logs', null, setLogsOutput, 'journalctl -n 50')} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">System Logs</button>
+                </div>
+
+                {routesOutput && renderOutput('Routing Table', routesOutput, 'ip route show')}
+                {arpOutput && renderOutput('ARP Table', arpOutput, 'ip neigh show')}
+                {connOutput && renderOutput('Active Connections', connOutput, 'ss -tunap')}
+                {servicesOutput && renderOutput('Service Status', servicesOutput, 'systemctl list-units')}
+                {fwOutput && renderOutput('Firewall Rules', fwOutput, 'nft list ruleset / iptables -L')}
+                {procsOutput && renderOutput('Top Processes', procsOutput, 'ps aux --sort=-%mem')}
+                {logsOutput && renderOutput('System Logs', logsOutput, 'journalctl -n 50')}
+            </div>
         </div>
     );
 }

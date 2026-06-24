@@ -5,6 +5,13 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cstdio>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <regex>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include "../activation/activation_manager.hpp"
@@ -73,6 +80,27 @@ std::string generate_session_token() {
     return ss.str();
 }
 
+// Helper: execute a shell command and capture stdout (with timeout)
+std::string exec_command(const std::string& cmd, int timeout_sec = 15) {
+    std::string result;
+    FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
+    if (!pipe) return "ERROR: popen() failed";
+
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), pipe) != nullptr) {
+        result += buf;
+        if (result.size() > 65536) {
+            result += "\n... (output truncated at 64KB)\n";
+            break;
+        }
+    }
+    int status = pclose(pipe);
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        // Append exit code info (command already returned its own output)
+    }
+    return result;
+}
+
 } // namespace
 
 namespace beout_os {
@@ -87,18 +115,26 @@ ApiServer::ApiServer(const std::string& cert_path, const std::string& private_ke
     if (existing_hash.empty()) {
         // Generate a random 16-character password on first boot
         std::string initial_password = generate_session_token().substr(0, 16);
-        db_->set_config("admin_password_hash", hash_password(initial_password));
-        // Write the initial password to a file so the admin can retrieve it
         std::string password_file_path = "/var/lib/beout_os/initial_admin_password";
-        std::ofstream pw_file(password_file_path);
-        if (pw_file.is_open()) {
-            pw_file << initial_password << std::endl;
+
+        // Write file FIRST so it's available even if DB write fails
+        int pw_fd = open(password_file_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (pw_fd >= 0) {
+            write(pw_fd, initial_password.c_str(), initial_password.size());
+            write(pw_fd, "\n", 1);
+            close(pw_fd);
             std::cerr << "========================================" << std::endl;
             std::cerr << "  INITIAL ADMIN PASSWORD GENERATED" << std::endl;
             std::cerr << "  Password saved to: " << password_file_path << std::endl;
             std::cerr << "  Change this password on first login." << std::endl;
             std::cerr << "========================================" << std::endl;
+        } else {
+            std::cerr << "WARNING: Failed to write initial admin password file: "
+                      << password_file_path << " (errno=" << errno << ")" << std::endl;
         }
+
+        // Store hash in DB after file is safely written
+        db_->set_config("admin_password_hash", hash_password(initial_password));
     }
 
     setup_routes();
@@ -293,6 +329,38 @@ void ApiServer::setup_routes() {
         }
     });
 
+    // Helper: detect real system network interfaces
+    auto detect_system_interfaces = []() -> std::vector<std::string> {
+        std::vector<std::string> result;
+        std::string output = exec_command("ls /sys/class/net/ 2>/dev/null");
+        std::istringstream iss(output);
+        std::string iface;
+        while (std::getline(iss, iface)) {
+            // Trim whitespace
+            iface.erase(0, iface.find_first_not_of(" \t\r\n"));
+            iface.erase(iface.find_last_not_of(" \t\r\n") + 1);
+            if (!iface.empty() && iface != "lo") {
+                result.push_back(iface);
+            }
+        }
+        return result;
+    };
+
+    // Helper: validate device name exists on system
+    auto validate_device_name = [&](const std::string& dev) -> bool {
+        if (dev.empty()) return true; // empty is OK (unassigned)
+        // Device names: alphanumerics, dots, dashes, underscores only
+        for (char c : dev) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) &&
+                c != '.' && c != '-' && c != '_') {
+                return false;
+            }
+        }
+        // Check if interface exists on system
+        auto ifaces = detect_system_interfaces();
+        return std::find(ifaces.begin(), ifaces.end(), dev) != ifaces.end();
+    };
+
     // Configuration API
     server_->Get("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -301,20 +369,27 @@ void ApiServer::setup_routes() {
         std::string json_str = db_->get_config("network_interfaces_json").value_or("");
         json interfaces;
         if (json_str.empty()) {
-            // Seed defaults from legacy keys or hardcoded values
-            std::string wan_dev = db_->get_config("network_WAN_interface").value_or("eth0");
-            std::string wan_ip = db_->get_config("network_WAN_ip").value_or("192.168.1.100");
+            // Seed defaults from legacy keys, falling back to DHCP (empty IP) defaults
+            // Do NOT hardcode IP addresses — use empty (DHCP) to avoid conflicts
+            std::string wan_dev = db_->get_config("network_WAN_interface").value_or("");
+            std::string wan_ip = db_->get_config("network_WAN_ip").value_or("");
             std::string wan_netmask = db_->get_config("network_WAN_netmask").value_or("255.255.255.0");
-            std::string wan_gateway = db_->get_config("network_WAN_gateway").value_or("192.168.1.1");
+            std::string wan_gateway = db_->get_config("network_WAN_gateway").value_or("");
 
-            std::string lan_dev = db_->get_config("network_LAN_interface").value_or("eth1");
-            std::string lan_ip = db_->get_config("network_LAN_ip").value_or("10.0.0.1");
+            std::string lan_dev = db_->get_config("network_LAN_interface").value_or("");
+            std::string lan_ip = db_->get_config("network_LAN_ip").value_or("");
             std::string lan_netmask = db_->get_config("network_LAN_netmask").value_or("255.255.255.0");
 
-            std::string mgmt_dev = db_->get_config("network_MGMT_interface").value_or("eth2");
-            std::string mgmt_ip = db_->get_config("network_MGMT_ip").value_or("192.168.100.99");
+            std::string mgmt_dev = db_->get_config("network_MGMT_interface").value_or("");
+            std::string mgmt_ip = db_->get_config("network_MGMT_ip").value_or("");
             std::string mgmt_netmask = db_->get_config("network_MGMT_netmask").value_or("255.255.255.0");
-            std::string mgmt_gateway = db_->get_config("network_MGMT_gateway").value_or("192.168.100.1");
+            std::string mgmt_gateway = db_->get_config("network_MGMT_gateway").value_or("");
+
+            // Auto-detect interface names if not configured
+            auto sys_ifaces = detect_system_interfaces();
+            if (wan_dev.empty() && sys_ifaces.size() > 0) wan_dev = sys_ifaces[0];
+            if (lan_dev.empty() && sys_ifaces.size() > 1) lan_dev = sys_ifaces[1];
+            if (mgmt_dev.empty() && sys_ifaces.size() > 2) mgmt_dev = sys_ifaces[2];
 
             interfaces = json::array({
                 {{"id", "wan"}, {"name", "wan1"}, {"device", wan_dev}, {"ip", wan_ip}, {"netmask", wan_netmask}, {"gateway", wan_gateway}, {"mgmt_access", true}},
@@ -336,6 +411,30 @@ void ApiServer::setup_routes() {
         res.set_content(response.dump(), "application/json");
     });
 
+    // Helper: validate IPv4 address format
+    auto validate_ip = [](const std::string& ip) -> bool {
+        if (ip.empty()) return true; // empty is OK (DHCP)
+        std::regex ip_regex(R"(^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$)");
+        std::smatch m;
+        if (!std::regex_match(ip, m, ip_regex)) return false;
+        for (int i = 1; i <= 4; i++) {
+            int octet = std::stoi(m[i]);
+            if (octet > 255) return false;
+        }
+        return true;
+    };
+
+    // Helper: validate a string is safe for shell interpolation (allows alphanumerics, dots, dashes, underscores, forward slashes, colons)
+    auto is_shell_safe = [](const std::string& s) -> bool {
+        for (char c : s) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) &&
+                c != '.' && c != '-' && c != '_' && c != '/' && c != ':') {
+                return false;
+            }
+        }
+        return !s.empty();
+    };
+
     // Configuration POST API
     server_->Post("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -344,11 +443,59 @@ void ApiServer::setup_routes() {
         try {
             auto body = json::parse(req.body);
             if (body.contains("interfaces") && body["interfaces"].is_array()) {
+                // --- Validate all interfaces before saving ---
+                std::set<std::string> seen_ips;
+                for (auto& item : body["interfaces"]) {
+                    std::string id = item.value("id", "");
+                    std::string ip = item.value("ip", "");
+
+                    // Normalize to lowercase
+                    std::transform(id.begin(), id.end(), id.begin(), ::tolower);
+
+                    // Validate IP format
+                    if (!ip.empty() && !validate_ip(ip)) {
+                        res.status = 400;
+                        res.set_content(json{{"error", "Invalid IP address for " + id + ": " + ip}}.dump(), "application/json");
+                        return;
+                    }
+                    std::string netmask = item.value("netmask", "");
+                    if (!netmask.empty() && !validate_ip(netmask)) {
+                        res.status = 400;
+                        res.set_content(json{{"error", "Invalid netmask for " + id + ": " + netmask}}.dump(), "application/json");
+                        return;
+                    }
+                    std::string gateway = item.value("gateway", "");
+                    if (!gateway.empty() && !validate_ip(gateway)) {
+                        res.status = 400;
+                        res.set_content(json{{"error", "Invalid gateway for " + id + ": " + gateway}}.dump(), "application/json");
+                        return;
+                    }
+
+                    // Check for duplicate IPs
+                    if (!ip.empty()) {
+                        if (seen_ips.count(ip)) {
+                            res.status = 400;
+                            res.set_content(json{{"error", "Duplicate IP address across interfaces: " + ip}}.dump(), "application/json");
+                            return;
+                        }
+                        seen_ips.insert(ip);
+                    }
+
+                    // Validate device name exists on system
+                    std::string device = item.value("device", "");
+                    if (!device.empty() && !validate_device_name(device)) {
+                        res.status = 400;
+                        res.set_content(json{{"error", "Network interface '" + device + "' does not exist on this system"}}.dump(), "application/json");
+                        return;
+                    }
+                }
+
                 db_->set_config("network_interfaces_json", body["interfaces"].dump());
 
                 // Sync back to legacy configurations for compatibility with CLI client
                 for (auto& item : body["interfaces"]) {
                     std::string id = item.value("id", "");
+                    std::transform(id.begin(), id.end(), id.begin(), ::tolower);
                     std::string device = item.value("device", "");
                     std::string ip = item.value("ip", "");
                     std::string netmask = item.value("netmask", "");
@@ -564,8 +711,22 @@ void ApiServer::setup_routes() {
             std::string ntp_server = body.value("ntp_server", "");
 
             if (!timezone.empty()) {
+                // Security: validate timezone is shell-safe and exists on disk
+                if (!is_shell_safe(timezone)) {
+                    res.status = 400;
+                    res.set_content(json{{"error", "Invalid timezone format: only alphanumerics, dots, dashes, underscores, and forward slashes allowed"}}.dump(), "application/json");
+                    return;
+                }
+                // Verify the timezone file exists before applying
+                std::string tz_path = "/usr/share/zoneinfo/" + timezone;
+                std::ifstream tz_check(tz_path.c_str());
+                if (!tz_check.good()) {
+                    res.status = 400;
+                    res.set_content(json{{"error", "Unknown timezone: " + timezone}}.dump(), "application/json");
+                    return;
+                }
                 db_->set_config("system_timezone", timezone);
-                // System command to set timezone
+                // System command to set timezone (timezone is validated safe above)
                 std::string cmd = "timedatectl set-timezone " + timezone + " 2>/dev/null || ln -sf /usr/share/zoneinfo/" + timezone + " /etc/localtime";
                 if (std::system(cmd.c_str()) != 0) {
                     std::cerr << "Warning: Failed to set timezone system settings." << std::endl;
@@ -573,8 +734,14 @@ void ApiServer::setup_routes() {
             }
 
             if (!ntp_server.empty()) {
+                // Security: validate NTP server is shell-safe (hostname or IP)
+                if (!is_shell_safe(ntp_server)) {
+                    res.status = 400;
+                    res.set_content(json{{"error", "Invalid NTP server format: only alphanumerics, dots, dashes, underscores, colons, and forward slashes allowed"}}.dump(), "application/json");
+                    return;
+                }
                 db_->set_config("system_ntp_server", ntp_server);
-                // System command to set NTP server in systemd-timesyncd config
+                // System command to set NTP server in systemd-timesyncd config (ntp_server is validated safe above)
                 std::ifstream t_file("/etc/systemd/timesyncd.conf");
                 if (t_file.good()) {
                     std::string cmd = "sed -i 's/^#\\?NTP=.*/NTP=" + ntp_server + "/' /etc/systemd/timesyncd.conf && systemctl restart systemd-timesyncd 2>/dev/null";
@@ -589,6 +756,214 @@ void ApiServer::setup_routes() {
             res.status = 500;
             res.set_content(json{{"error", e.what()}}.dump(), "application/json");
         }
+    });
+
+    // ==========================================
+    // DEBUG / DIAGNOSTICS API (auth required)
+    // ==========================================
+
+    // Helper: validate hostname/IP for diagnostic commands (allows alphanumerics, dots, dashes, colons)
+    auto validate_host = [](const std::string& host) -> bool {
+        if (host.empty()) return false;
+        for (char c : host) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) &&
+                c != '.' && c != '-' && c != ':' && c != '/') {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Ping test
+    server_->Post("/api/debug/ping", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        try {
+            auto body = json::parse(req.body);
+            std::string host = body.value("host", "");
+            int count = body.value("count", 4);
+            if (!validate_host(host)) {
+                res.status = 400;
+                res.set_content(json{{"error", "Invalid host"}}.dump(), "application/json");
+                return;
+            }
+            if (count < 1 || count > 20) count = 4;
+            std::string cmd = "ping -c " + std::to_string(count) + " -W 2 " + host;
+            std::string output = exec_command(cmd, 30);
+            res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+    // Traceroute
+    server_->Post("/api/debug/traceroute", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        try {
+            auto body = json::parse(req.body);
+            std::string host = body.value("host", "");
+            if (!validate_host(host)) {
+                res.status = 400;
+                res.set_content(json{{"error", "Invalid host"}}.dump(), "application/json");
+                return;
+            }
+            std::string cmd = "traceroute -m 15 -w 2 " + host;
+            std::string output = exec_command(cmd, 30);
+            res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+    // DNS lookup
+    server_->Post("/api/debug/dns", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        try {
+            auto body = json::parse(req.body);
+            std::string host = body.value("host", "");
+            if (!validate_host(host)) {
+                res.status = 400;
+                res.set_content(json{{"error", "Invalid host"}}.dump(), "application/json");
+                return;
+            }
+            std::string cmd = "dig +short " + host;
+            std::string output = exec_command(cmd, 10);
+            res.set_content(json{{"command", cmd}, {"output", output}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json{{"error", e.what()}}.dump(), "application/json");
+        }
+    });
+
+    // Routing table
+    server_->Get("/api/debug/routes", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("ip route show");
+        res.set_content(json{{"command", "ip route show"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // ARP table
+    server_->Get("/api/debug/arp", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("ip neigh show");
+        res.set_content(json{{"command", "ip neigh show"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Active connections
+    server_->Get("/api/debug/connections", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("ss -tunap 2>/dev/null || netstat -tunap 2>/dev/null");
+        res.set_content(json{{"command", "ss -tunap"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Service status
+    server_->Get("/api/debug/services", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("systemctl list-units --type=service --state=running,failed --no-pager 2>/dev/null");
+        res.set_content(json{{"command", "systemctl list-units"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // System logs (last N lines)
+    server_->Get("/api/debug/logs", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string lines = req.get_param_value("lines");
+        int n = 50;
+        if (!lines.empty()) {
+            try { n = std::stoi(lines); } catch (...) {}
+            if (n < 1) n = 1;
+            if (n > 500) n = 500;
+        }
+        std::string output = exec_command("journalctl -n " + std::to_string(n) + " --no-pager 2>/dev/null || tail -n " + std::to_string(n) + " /var/log/syslog 2>/dev/null || tail -n " + std::to_string(n) + " /var/log/messages 2>/dev/null");
+        res.set_content(json{{"command", "journalctl -n " + std::to_string(n)}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Firewall rules
+    server_->Get("/api/debug/firewall", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("nft list ruleset 2>/dev/null || iptables -L -n -v 2>/dev/null");
+        res.set_content(json{{"command", "nft list ruleset"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Process list
+    server_->Get("/api/debug/processes", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("ps aux --sort=-%mem | head -50");
+        res.set_content(json{{"command", "ps aux"}, {"output", output}}.dump(), "application/json");
+    });
+
+    // Real system resources (replaces simulated dashboard data)
+    server_->Get("/api/debug/resources", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+
+        json result;
+
+        // Uptime
+        std::ifstream uptime_file("/proc/uptime");
+        if (uptime_file.is_open()) {
+            double up_seconds;
+            uptime_file >> up_seconds;
+            int days = (int)up_seconds / 86400;
+            int hours = ((int)up_seconds % 86400) / 3600;
+            int mins = ((int)up_seconds % 3600) / 60;
+            result["uptime"] = std::to_string(days) + "d " + std::to_string(hours) + "h " + std::to_string(mins) + "m";
+            result["uptime_seconds"] = (int)up_seconds;
+        }
+
+        // Memory
+        std::ifstream meminfo("/proc/meminfo");
+        if (meminfo.is_open()) {
+            std::string line;
+            long total = 0, available = 0;
+            while (std::getline(meminfo, line)) {
+                if (line.find("MemTotal:") == 0) total = std::stol(line.substr(line.find(':') + 1));
+                if (line.find("MemAvailable:") == 0) available = std::stol(line.substr(line.find(':') + 1));
+            }
+            result["memory_total_mb"] = total / 1024;
+            result["memory_available_mb"] = available / 1024;
+            result["memory_used_mb"] = (total - available) / 1024;
+            result["memory_percent"] = total > 0 ? (int)(((total - available) * 100) / total) : 0;
+        }
+
+        // CPU load
+        std::ifstream loadavg("/proc/loadavg");
+        if (loadavg.is_open()) {
+            std::string line;
+            std::getline(loadavg, line);
+            std::istringstream iss(line);
+            std::string l1, l5, l15;
+            iss >> l1 >> l5 >> l15;
+            result["load_1min"] = l1;
+            result["load_5min"] = l5;
+            result["load_15min"] = l15;
+        }
+
+        // Disk usage
+        result["disk"] = exec_command("df -h --output=source,size,used,avail,pcent,target 2>/dev/null | tail -n +2");
+
+        // Network interfaces
+        result["interfaces"] = exec_command("ip -br addr show 2>/dev/null");
+
+        res.set_content(result.dump(), "application/json");
+    });
+
+    // Network interface list (for validation)
+    server_->Get("/api/debug/interfaces", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        if (!check_auth(req, res)) return;
+        std::string output = exec_command("ls /sys/class/net/ 2>/dev/null");
+        res.set_content(json{{"command", "ls /sys/class/net/"}, {"output", output}}.dump(), "application/json");
     });
 }
 

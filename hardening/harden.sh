@@ -15,7 +15,12 @@ fi
 # 3. Secure GRUB Bootloader
 if [ -f /etc/default/grub ]; then
     sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/' /etc/default/grub
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash net.ifnames=0 biosdevname=0 audit=1"/' /etc/default/grub
+    # Apply net.ifnames=0 biosdevname=0 (critical: appliance expects eth0/eth1/eth2)
+    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null; then
+        sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash net.ifnames=0 biosdevname=0 audit=1"/' /etc/default/grub
+    else
+        echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash net.ifnames=0 biosdevname=0 audit=1"' >> /etc/default/grub
+    fi
     update-grub 2>/dev/null || true
 fi
 
