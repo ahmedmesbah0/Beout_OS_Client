@@ -15,9 +15,19 @@ get_config() {
 }
 
 # 1. Get local system details
-MACHINE_ID="BEOUT_OS-DEMO-MACHINE-ID-0000"
+MACHINE_ID=""
 if [ -f /etc/machine-id ]; then
     MACHINE_ID=$(cat /etc/machine-id | tr -d ' \n\r')
+fi
+if [ -z "$MACHINE_ID" ] && [ -f /var/lib/beout_os/machine_id ]; then
+    MACHINE_ID=$(cat /var/lib/beout_os/machine_id | tr -d ' \n\r')
+fi
+if [ -z "$MACHINE_ID" ]; then
+    MACHINE_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "")
+    if [ -n "$MACHINE_ID" ]; then
+        mkdir -p /var/lib/beout_os
+        echo "$MACHINE_ID" > /var/lib/beout_os/machine_id
+    fi
 fi
 
 LICENSE_KEY=$(get_config "activation_license_key")
@@ -27,10 +37,11 @@ if [ -f /etc/beout_os_version ]; then
     CURRENT_VERSION=$(cat /etc/beout_os_version | tr -d ' \n\r')
 fi
 
-# 2. Determine main server URL
+# 2. Determine main server URL — must be explicitly configured
 SERVER_URL=$(get_config "license_server_url")
 if [ -z "$SERVER_URL" ]; then
-    SERVER_URL="https://update.beout.ai"
+    echo "Error: License server URL is not configured. Run the dashboard and configure the server URL first."
+    exit 1
 fi
 
 # Connection Security: Configure Curl to verify SSL/TLS certificates by default
@@ -74,10 +85,20 @@ fi
 UPDATE_URL="$SERVER_URL/api/updates/latest"
 echo "Checking for updates at $UPDATE_URL..."
 
-# Fetch latest.json
+# Fetch latest.json with HTTP status code capture
 TEMP_JSON=$(mktemp)
-if ! curl -s $CURL_OPTS -f -L -o "$TEMP_JSON" "$UPDATE_URL"; then
-    echo "Error: Failed to fetch update metadata from $UPDATE_URL"
+HTTP_CODE=$(curl -s $CURL_OPTS -L -o "$TEMP_JSON" -w "%{http_code}" "$UPDATE_URL" 2>/dev/null || echo "000")
+
+# 404 means no updates available — this is normal, exit gracefully
+if [ "$HTTP_CODE" = "404" ]; then
+    echo "No updates available on the server. System is up to date (Version $CURRENT_VERSION)."
+    rm -f "$TEMP_JSON"
+    exit 0
+fi
+
+# Any other non-2xx code is an error
+if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+    echo "Error: Failed to fetch update metadata from $UPDATE_URL (HTTP $HTTP_CODE)"
     rm -f "$TEMP_JSON"
     exit 1
 fi

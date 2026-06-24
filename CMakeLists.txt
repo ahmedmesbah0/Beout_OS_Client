@@ -23,7 +23,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,un
 
 # Dependencies
 include(FetchContent)
-find_package(OpenSSL)
+find_package(OpenSSL REQUIRED)
 find_package(SQLite3)
 
 if(BUILD_TESTING)

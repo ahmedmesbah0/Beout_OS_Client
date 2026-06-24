@@ -10,6 +10,7 @@ export default function App() {
     const [token, setToken] = useState<string | null>(localStorage.getItem('auth_token'));
     const [activeTab, setActiveTab] = useState('dashboard-status');
     const [health, setHealth] = useState<any>(null);
+    const [applianceVersion, setApplianceVersion] = useState<string>('1.0.0');
 
     // Unified fetch helper that handles 401 Unauthorized and auto-logout
     const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
@@ -42,8 +43,24 @@ export default function App() {
                 }
             } catch (err) {}
         };
+        // Also fetch the appliance's own version from the license endpoint (public)
+        const getApplianceVersion = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/license`);
+                if (res && res.ok) {
+                    const data = await res.json();
+                    if (data.os_version) {
+                        setApplianceVersion(data.os_version);
+                    }
+                }
+            } catch (err) {}
+        };
         getHealth();
-        const interval = setInterval(getHealth, 30000);
+        getApplianceVersion();
+        const interval = setInterval(() => {
+            getHealth();
+            getApplianceVersion();
+        }, 30000);
         return () => clearInterval(interval);
     }, [token]);
 
@@ -54,7 +71,7 @@ export default function App() {
     return (
         <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100 antialiased">
             {/* Sidebar navigation */}
-            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} health={health} />
+            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} health={health} applianceVersion={applianceVersion} />
 
             {/* Content wrapper */}
             <div className="flex flex-col flex-1 h-screen overflow-hidden bg-[#070b13]">
@@ -197,7 +214,7 @@ function Login({ setToken }: { setToken: (t: string) => void }) {
 }
 
 // --- SIDEBAR ---
-function Sidebar({ activeTab, setActiveTab, health }: { activeTab: string, setActiveTab: (tab: string) => void, health: any }) {
+function Sidebar({ activeTab, setActiveTab, health, applianceVersion }: { activeTab: string, setActiveTab: (tab: string) => void, health: any, applianceVersion: string }) {
     const [expandedGroups, setExpandedGroups] = useState({
         dashboard: true,
         network: true,
@@ -306,7 +323,7 @@ function Sidebar({ activeTab, setActiveTab, health }: { activeTab: string, setAc
             <div className="p-4 border-t border-slate-800/80 bg-slate-900/20 text-xs text-slate-500 font-mono space-y-1">
                 <div className="flex items-center justify-between text-slate-400 font-bold">
                     <span>beout.ai</span>
-                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">{health?.version ? `v${health.version}` : 'v1.0.0'}</span>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">{applianceVersion ? `v${applianceVersion}` : 'v1.0.0'}</span>
                 </div>
                 <div className="text-[10px] text-slate-600">Enterprise Appliance Node</div>
             </div>
@@ -507,7 +524,8 @@ function DashboardStatus({ fetchWithAuth }: { fetchWithAuth: any }) {
                     setHealth(h_data);
                 }
 
-                const l_res = await fetchWithAuth(`${API_BASE}/license`);
+                // License endpoint is public — use direct fetch
+                const l_res = await fetch(`${API_BASE}/license`);
                 if (l_res && l_res.ok) {
                     const l_data = await l_res.json();
                     setLicense(l_data);
@@ -545,7 +563,7 @@ function DashboardStatus({ fetchWithAuth }: { fetchWithAuth: any }) {
     }, []);
 
     const isActive = license?.status === 'ACTIVE';
-    const truncatedMachineId = license?.machine_id ? license.machine_id.slice(0, 16).toUpperCase() : 'BEOUT-OS-VM-ID';
+    const truncatedMachineId = license?.machine_id ? license.machine_id.slice(0, 36).toUpperCase() : 'Loading...';
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -567,7 +585,7 @@ function DashboardStatus({ fetchWithAuth }: { fetchWithAuth: any }) {
                     </div>
                     <div className="flex justify-between font-mono">
                         <span className="text-slate-500 font-sans">Firmware</span>
-                        <span className="text-slate-300 font-semibold">{health?.version || 'v1.0.0 (Stable)'}</span>
+                        <span className="text-slate-300 font-semibold">v{license?.os_version || '1.0.0'}</span>
                     </div>
                     <div className="flex justify-between font-mono">
                         <span className="text-slate-500 font-sans">Operation Mode</span>
@@ -662,14 +680,14 @@ function DashboardStatus({ fetchWithAuth }: { fetchWithAuth: any }) {
                     </div>
                     <div className="flex justify-between font-mono">
                         <span className="text-slate-500 font-sans">Server URL</span>
-                        <span className="text-slate-300 text-xs select-all">{license?.license_server_url || 'https://update.beout.ai'}</span>
+                        <span className="text-slate-300 text-xs select-all">{license?.license_server_url || 'Not configured'}</span>
                     </div>
                     <div className="flex justify-between font-mono">
                         <span className="text-slate-500 font-sans">Update Status</span>
                         <span>
                             {health?.server_status === 'online' ? (
                                 <span className="text-emerald-400 font-sans font-semibold flex items-center gap-1.5">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> update.beout.ai Reachable
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Server Reachable
                                 </span>
                             ) : (
                                 <span className="text-rose-400 font-sans font-semibold flex items-center gap-1.5">
@@ -1084,14 +1102,15 @@ function Interfaces({ fetchWithAuth }: { fetchWithAuth: any }) {
 function License({ fetchWithAuth }: { fetchWithAuth: any }) {
     const [license, setLicense] = useState<any>(null);
     const [licenseKeyInput, setLicenseKeyInput] = useState('');
-    const [serverUrlInput, setServerUrlInput] = useState('https://update.beout.ai');
+    const [serverUrlInput, setServerUrlInput] = useState('');
     const [verifySslInput, setVerifySslInput] = useState('1');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
+    // Fetch license status — now uses direct fetch since endpoint is public
     const fetchLicenseStatus = async () => {
         try {
-            const res = await fetchWithAuth(`${API_BASE}/license`);
+            const res = await fetch(`${API_BASE}/license`);
             if (res && res.ok) {
                 const text = await res.text();
                 let data;
@@ -1104,34 +1123,19 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
                 setLicense(data);
                 if (data.license_server_url) setServerUrlInput(data.license_server_url);
                 if (data.license_server_verify_ssl) setVerifySslInput(data.license_server_verify_ssl);
+            } else {
+                // License endpoint unreachable — API might not be running
+                setLicense({ status: 'UNKNOWN', machine_id: 'API unavailable', license_server_url: '' });
             }
         } catch (err) {
-            console.error(err);
+            console.error("Failed to fetch license status:", err);
+            setLicense({ status: 'UNKNOWN', machine_id: 'Connection failed', license_server_url: '' });
         }
     };
 
     useEffect(() => {
         fetchLicenseStatus();
     }, []);
-
-    // Convert base64 signature to formatted license key: XXXX-XXXX-XXXX-XXXX
-    const signatureToLicenseKey = (base64Signature: string): string => {
-        try {
-            // Decode base64 to binary
-            const binary = atob(base64Signature);
-
-            // Extract first 16 bytes as hex string
-            const hex = Array.from(binary)
-                .map(byte => byte.charCodeAt(0).toString(16).padStart(2, '0'))
-                .join('')
-                .substring(0, 32);
-
-            // Format as XXXX-XXXX-XXXX-XXXX
-            return `${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}`;
-        } catch (error) {
-            return 'Invalid signature';
-        }
-    };
 
     const handleActivate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1145,7 +1149,8 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
                 return;
             }
 
-            const res = await fetchWithAuth(`${API_BASE}/license/activate`, {
+            // Use direct fetch (endpoint is public, no auth needed)
+            const res = await fetch(`${API_BASE}/license/activate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1182,6 +1187,7 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
 
     const handleCheckUpdates = async () => {
         try {
+            // Use fetchWithAuth for update check (requires admin auth)
             const res = await fetchWithAuth(`${API_BASE}/update/check`, { method: 'POST' });
             if (res && res.ok) {
                 alert('Check request successfully triggered in background daemon.');
@@ -1194,7 +1200,7 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
     };
 
     const isActive = license?.status === 'ACTIVE';
-    const formattedLicenseKey = license?.token ? signatureToLicenseKey(license.token) : 'Unregistered Device';
+    const machineId = license?.machine_id || 'Loading...';
 
     return (
         <div className="max-w-2xl mx-auto bg-slate-900/30 border border-slate-800/80 rounded-xl p-6 shadow-lg backdrop-blur-md space-y-6">
@@ -1220,11 +1226,11 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
             <div className="space-y-3.5 text-sm font-mono border-b border-slate-800/40 pb-5">
                 <div className="flex justify-between">
                     <span className="text-slate-500 font-sans">Appliance Node ID</span>
-                    <span className="text-slate-300 select-all font-semibold">{license?.machine_id || 'Connecting...'}</span>
+                    <span className="text-slate-300 select-all font-semibold">{machineId}</span>
                 </div>
                 <div className="flex justify-between">
                     <span className="text-slate-500 font-sans">Registered Key</span>
-                    <span className="text-slate-300 font-semibold">{isActive ? formattedLicenseKey : 'Unregistered Device'}</span>
+                    <span className="text-slate-300 font-semibold">{isActive ? (license?.license_key || 'Active') : 'Unregistered Device'}</span>
                 </div>
             </div>
 
@@ -1234,7 +1240,7 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
                     <input
                         type="text"
                         className="block w-full rounded bg-slate-950/80 border border-slate-800 px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="https://update.beout.ai"
+                        placeholder="https://your-server.example.com"
                         value={serverUrlInput}
                         onChange={e => setServerUrlInput(e.target.value)}
                         required
@@ -1294,7 +1300,7 @@ function License({ fetchWithAuth }: { fetchWithAuth: any }) {
             <div className="pt-4 border-t border-slate-800/40 text-xs text-slate-500 font-sans">
                 {isActive
                     ? 'This hardware node is registered and active. The update agent triggers automatic checks every 5 minutes in background.'
-                    : 'Appliance is running in unlicensed evaluation mode. Enter a valid signature key to unlock full enterprise protection.'}
+                    : 'Enter the licensing server URL and your registration key to activate this appliance. The server URL must point to a running Beout_OS licensing server.'}
             </div>
 
         </div>

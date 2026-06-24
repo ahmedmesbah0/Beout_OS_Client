@@ -7,8 +7,15 @@ namespace activation {
 
 class MachineId {
 public:
-    // Generate or retrieve the unique machine ID
+    // Retrieve the unique machine ID, generating one if it doesn't exist
     static std::string get();
+
+private:
+    // Generate a new machine ID and persist it to disk
+    static std::string generate_and_persist();
+
+    // Persistent storage path for generated machine ID
+    static constexpr const char* PERSISTENT_ID_PATH = "/var/lib/beout_os/machine_id";
 };
 
 } // namespace activation

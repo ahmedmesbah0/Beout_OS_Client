@@ -81,11 +81,24 @@ namespace api {
 ApiServer::ApiServer(const std::string& cert_path, const std::string& private_key_path, std::shared_ptr<database::DatabaseManager> db)
     : db_(std::move(db)) {
     server_ = std::make_unique<httplib::SSLServer>(cert_path.c_str(), private_key_path.c_str());
-    
-    // Seed default admin password if not already present in the database
+
+    // Seed initial admin password if not already present
     std::string existing_hash = db_->get_config("admin_password_hash").value_or("");
     if (existing_hash.empty()) {
-        db_->set_config("admin_password_hash", hash_password("admin"));
+        // Generate a random 16-character password on first boot
+        std::string initial_password = generate_session_token().substr(0, 16);
+        db_->set_config("admin_password_hash", hash_password(initial_password));
+        // Write the initial password to a file so the admin can retrieve it
+        std::string password_file_path = "/var/lib/beout_os/initial_admin_password";
+        std::ofstream pw_file(password_file_path);
+        if (pw_file.is_open()) {
+            pw_file << initial_password << std::endl;
+            std::cerr << "========================================" << std::endl;
+            std::cerr << "  INITIAL ADMIN PASSWORD GENERATED" << std::endl;
+            std::cerr << "  Password saved to: " << password_file_path << std::endl;
+            std::cerr << "  Change this password on first login." << std::endl;
+            std::cerr << "========================================" << std::endl;
+        }
     }
 
     setup_routes();
@@ -186,38 +199,52 @@ void ApiServer::setup_routes() {
 
         // Check licensing/update server status
         bool server_online = false;
-        std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
-        std::string host = server_url;
-        int port = 443;
-        if (host.rfind("https://", 0) == 0) {
-            host = host.substr(8);
-            port = 443;
-        } else if (host.rfind("http://", 0) == 0) {
-            host = host.substr(7);
-            port = 80;
-        }
-        size_t colon_pos = host.find(':');
-        if (colon_pos != std::string::npos) {
+        std::string server_url = db_->get_config("license_server_url").value_or("");
+
+        // Only probe the server if a URL is configured
+        if (!server_url.empty()) {
+            std::string host = server_url;
+            int port = 443;
+            bool is_https = false;
+            if (host.rfind("https://", 0) == 0) {
+                host = host.substr(8);
+                port = 443;
+                is_https = true;
+            } else if (host.rfind("http://", 0) == 0) {
+                host = host.substr(7);
+                port = 80;
+            }
+            size_t colon_pos = host.find(':');
+            if (colon_pos != std::string::npos) {
+                try {
+                    port = std::stoi(host.substr(colon_pos + 1));
+                } catch (...) {}
+                host = host.substr(0, colon_pos);
+            }
             try {
-                port = std::stoi(host.substr(colon_pos + 1));
+                httplib::Client cli(host, port);
+
+                // Respect user's SSL verification setting
+                std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
+                if (is_https && verify_ssl == "1") {
+                    cli.enable_server_certificate_verification(true);
+                    // Use custom CA bundle if provided
+                    std::ifstream ca_file("/opt/beout_os/etc/server_ca.pem");
+                    if (ca_file.good()) {
+                        cli.set_ca_cert_path("/opt/beout_os/etc/server_ca.pem");
+                    }
+                } else if (is_https) {
+                    cli.enable_server_certificate_verification(false);
+                }
+
+                cli.set_connection_timeout(1, 0);
+                cli.set_read_timeout(1, 0);
+                // Only probe /api/health — the standard health endpoint
+                if (auto r = cli.Get("/api/health")) {
+                    server_online = true;
+                }
             } catch (...) {}
-            host = host.substr(0, colon_pos);
         }
-        try {
-            httplib::Client cli(host, port);
-            if (port == 443) {
-                cli.enable_server_certificate_verification(false);
-            }
-            cli.set_connection_timeout(1, 0);
-            cli.set_read_timeout(1, 0);
-            if (auto r = cli.Get("/api/health")) {
-                server_online = true;
-            } else if (auto r2 = cli.Get("/api/license")) {
-                server_online = true;
-            } else if (auto r3 = cli.Get("/")) {
-                server_online = true;
-            }
-        } catch (...) {}
 
         // Get hostname
         std::string hostname = "beoutos";
@@ -369,31 +396,40 @@ void ApiServer::setup_routes() {
          res.set_content(json{{"status", "triggered"}}.dump(), "application/json");
      });
 
-    // License Status API
+    // License Status API (public - unregistered devices need to read their status)
     server_->Get("/api/license", [&](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
-        if (!check_auth(req, res)) return;
 
         std::string status = db_->get_config("activation_status").value_or("INACTIVE");
         std::string key = db_->get_config("activation_license_key").value_or("");
         std::string machine_id = beout_os::activation::MachineId::get();
-        std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
+        std::string server_url = db_->get_config("license_server_url").value_or("");
         std::string verify_ssl = db_->get_config("license_server_verify_ssl").value_or("1");
+
+        // Read the appliance's own OS version from /etc/beout_os_version
+        std::string os_version = "1.0.0";
+        std::ifstream ver_file("/etc/beout_os_version");
+        if (ver_file.is_open()) {
+            std::getline(ver_file, os_version);
+            // Trim whitespace
+            os_version.erase(0, os_version.find_first_not_of(" \t\r\n"));
+            os_version.erase(os_version.find_last_not_of(" \t\r\n") + 1);
+        }
 
         json response = {
             {"status", status},
             {"license_key", key},
             {"machine_id", machine_id},
             {"license_server_url", server_url},
-            {"license_server_verify_ssl", verify_ssl}
+            {"license_server_verify_ssl", verify_ssl},
+            {"os_version", os_version}
         };
         res.set_content(response.dump(), "application/json");
     });
 
-    // License Activation API
+    // License Activation API (public - no auth needed for initial registration)
     server_->Post("/api/license/activate", [&](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
-        if (!check_auth(req, res)) return;
 
         try {
             auto body = json::parse(req.body);
@@ -405,15 +441,20 @@ void ApiServer::setup_routes() {
             }
 
             // Save user-provided Licensing Server Settings if they are passed
-            if (body.contains("license_server_url")) {
+            if (body.contains("license_server_url") && !body["license_server_url"].empty()) {
                 db_->set_config("license_server_url", body["license_server_url"]);
             }
             if (body.contains("license_server_verify_ssl")) {
                 db_->set_config("license_server_verify_ssl", body["license_server_verify_ssl"]);
             }
 
-            // Get server URL
-            std::string server_url = db_->get_config("license_server_url").value_or("https://update.beout.ai");
+            // Get server URL — must be explicitly configured
+            std::string server_url = db_->get_config("license_server_url").value_or("");
+            if (server_url.empty()) {
+                res.status = 400;
+                res.set_content(json{{"error", "License server URL is not configured. Provide a license_server_url in the request."}}.dump(), "application/json");
+                return;
+            }
             std::string machine_id = beout_os::activation::MachineId::get();
 
             // Prepare client HTTP request to Main Server
@@ -463,9 +504,13 @@ void ApiServer::setup_routes() {
                     std::stringstream ss;
                     ss << pub_file.rdbuf();
                     pub_key = ss.str();
-                } else {
-                    // Fallback to developer key
-                    pub_key = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAvaUOLMIWZZgDTNnYbTi3r4gpLhMXMgo4PqgXUj1Njmk=\n-----END PUBLIC KEY-----\n";
+                }
+
+                if (pub_key.empty()) {
+                    std::cerr << "ERROR: Public key file not found at /opt/beout_os/etc/license_public_key.pem. Cannot verify activation signature." << std::endl;
+                    res.status = 500;
+                    res.set_content(json{{"error", "Licensing public key is missing from the appliance. Contact your system administrator."}}.dump(), "application/json");
+                    return;
                 }
 
                 beout_os::activation::ActivationManager act_mgr(db_, pub_key);

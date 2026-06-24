@@ -1,5 +1,6 @@
 [Unit]
-Description=Run Beout_OS Auto-Updater every 30 seconds (Testing)
+Description=Beout_OS Auto-Updater periodic check (Testing)
+Documentation=https://beout.ai/docs
 
 [Timer]
 OnBootSec=10s
